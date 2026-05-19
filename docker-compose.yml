@@ -1,0 +1,62 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: advisor_signal_extraction
+      POSTGRES_USER: advisor
+      POSTGRES_PASSWORD: advisor
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  backend:
+    build:
+      context: .
+      dockerfile: infra/backend.Dockerfile
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app/backend
+      - ./shared:/app/shared
+
+  worker:
+    build:
+      context: .
+      dockerfile: infra/backend.Dockerfile
+    command: celery -A backend.app.workers.celery_app.celery_app worker --loglevel=INFO
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./backend:/app/backend
+      - ./shared:/app/shared
+
+  frontend:
+    build:
+      context: .
+      dockerfile: infra/frontend.Dockerfile
+    depends_on:
+      - backend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app/frontend
+      - /app/frontend/node_modules
+
+volumes:
+  postgres_data:
+

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SignalResult",
+  "type": "object",
+  "properties": {
+    "id": { "type": "string" },
+    "transcript_id": { "type": "string" },
+    "signal_type": { "enum": ["driver", "blocker"] },
+    "category": { "type": "string" },
+    "summary": { "type": "string" },
+    "evidence_quote": { "type": "string" },
+    "evidence_strength": { "enum": ["explicit", "implied"] },
+    "rationale": { "type": "string" }
+  },
+  "required": [
+    "id",
+    "transcript_id",
+    "signal_type",
+    "category",
+    "summary",
+    "evidence_quote",
+    "evidence_strength",
+    "rationale"
+  ]
+}

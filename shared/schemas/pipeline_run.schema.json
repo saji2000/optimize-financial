@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PipelineRun",
+  "type": "object",
+  "properties": {
+    "id": { "type": "string" },
+    "transcript_id": { "type": "string" },
+    "status": { "enum": ["queued", "running", "completed", "failed"] }
+  },
+  "required": ["id", "transcript_id", "status"]
+}
+

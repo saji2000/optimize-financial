@@ -1,0 +1,20 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+node_modules/
+dist/
+coverage/
+*.log
+data/transcripts
+data/outputs
+
+
+# Local-only transcript material. Keep real/confidential transcripts out of git.
+data/sample_transcripts/*
+!data/sample_transcripts/README.md
+!data/sample_transcripts/synthetic_recruiting_call.txt
+data/sample_outputs/*
+!data/sample_outputs/README.md
