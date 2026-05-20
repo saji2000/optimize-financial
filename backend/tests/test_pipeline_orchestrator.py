@@ -4,8 +4,9 @@ from typing import Any
 from app.llm.openai_client import OpenAIClient
 from app.pipeline.orchestrator import PipelineOrchestrator
 from app.pipeline.agents.consolidation_ranking_agent import ConsolidationRankingAgent
+from app.pipeline.agents.evidence_validation_agent import EvidenceValidationAgent
 from app.pipeline.agents.signal_extraction_agent import SignalExtractionAgent
-from app.pipeline.schemas import CandidateSignal, PreparedTranscript, RankedSignal
+from app.pipeline.schemas import CandidateSignal, PreparedTranscript, RankedSignal, ValidatedSignal
 
 
 class NoopAgentOutputWriter:
@@ -86,12 +87,26 @@ def test_pipeline_orchestrator_extracts_supported_advisor_signals(monkeypatch) -
             RankedSignal(**candidates[2].model_dump(), rank=2),
         ]
 
+    def fake_evidence_validation_run(
+        self: EvidenceValidationAgent,
+        ranked_candidates: list[RankedSignal],
+        prepared_transcript: PreparedTranscript | None = None,
+    ) -> list[ValidatedSignal]:
+        return [
+            ValidatedSignal(
+                **candidate.model_dump(),
+                validation_notes="Sanitized test signal is supported.",
+            )
+            for candidate in ranked_candidates
+        ]
+
     monkeypatch.setattr(SignalExtractionAgent, "run", fake_signal_extraction_run)
     monkeypatch.setattr(
         ConsolidationRankingAgent,
         "run",
         fake_consolidation_ranking_run,
     )
+    monkeypatch.setattr(EvidenceValidationAgent, "run", fake_evidence_validation_run)
     transcript = """
 00:01:00 Optimize Rep: Our platform has a modern client portal.
 00:01:15 Advisor: The technology at my current firm is slow and clients complain about the portal.
@@ -137,12 +152,26 @@ def test_pipeline_orchestrator_writes_all_agent_outputs_in_order(monkeypatch) ->
     ) -> list[RankedSignal]:
         return [RankedSignal(**candidates[0].model_dump(), rank=1)]
 
+    def fake_evidence_validation_run(
+        self: EvidenceValidationAgent,
+        ranked_candidates: list[RankedSignal],
+        prepared_transcript: PreparedTranscript | None = None,
+    ) -> list[ValidatedSignal]:
+        return [
+            ValidatedSignal(
+                **candidate.model_dump(),
+                validation_notes="Sanitized test signal is supported.",
+            )
+            for candidate in ranked_candidates
+        ]
+
     monkeypatch.setattr(SignalExtractionAgent, "run", fake_signal_extraction_run)
     monkeypatch.setattr(
         ConsolidationRankingAgent,
         "run",
         fake_consolidation_ranking_run,
     )
+    monkeypatch.setattr(EvidenceValidationAgent, "run", fake_evidence_validation_run)
     writer = RecordingAgentOutputWriter()
     transcript = "00:01:00 Advisor: I need stronger operations support."
 
@@ -201,12 +230,26 @@ def test_pipeline_orchestrator_writer_failure_logs_warning_and_continues(
     ) -> list[RankedSignal]:
         return [RankedSignal(**candidates[0].model_dump(), rank=1)]
 
+    def fake_evidence_validation_run(
+        self: EvidenceValidationAgent,
+        ranked_candidates: list[RankedSignal],
+        prepared_transcript: PreparedTranscript | None = None,
+    ) -> list[ValidatedSignal]:
+        return [
+            ValidatedSignal(
+                **candidate.model_dump(),
+                validation_notes="Sanitized test signal is supported.",
+            )
+            for candidate in ranked_candidates
+        ]
+
     monkeypatch.setattr(SignalExtractionAgent, "run", fake_signal_extraction_run)
     monkeypatch.setattr(
         ConsolidationRankingAgent,
         "run",
         fake_consolidation_ranking_run,
     )
+    monkeypatch.setattr(EvidenceValidationAgent, "run", fake_evidence_validation_run)
     transcript = "00:01:00 Advisor: I need stronger operations support."
 
     with caplog.at_level(logging.WARNING):
@@ -230,3 +273,5 @@ def test_pipeline_orchestrator_can_disable_usage_recording() -> None:
     assert orchestrator.signal_extraction_agent.llm_client.usage_recorder is None
     assert isinstance(orchestrator.consolidation_ranking_agent.llm_client, OpenAIClient)
     assert orchestrator.consolidation_ranking_agent.llm_client.usage_recorder is None
+    assert isinstance(orchestrator.evidence_validation_agent.llm_client, OpenAIClient)
+    assert orchestrator.evidence_validation_agent.llm_client.usage_recorder is None

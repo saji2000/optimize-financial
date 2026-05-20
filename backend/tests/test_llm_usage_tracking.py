@@ -5,13 +5,16 @@ import pytest
 from app.llm.openai_client import LLMCallContext, OpenAIClient
 from app.llm.structured_outputs import (
     ConsolidationRankingResult,
+    EvidenceValidationResult,
     SegmentSignalExtractionResult,
 )
 from app.pipeline.agents.consolidation_ranking_agent import ConsolidationRankingAgent
+from app.pipeline.agents.evidence_validation_agent import EvidenceValidationAgent
 from app.pipeline.agents.signal_extraction_agent import SignalExtractionAgent
 from app.pipeline.schemas import (
     CandidateSignal,
     PreparedTranscript,
+    RankedSignal,
     TranscriptChunk,
     TranscriptTurn,
 )
@@ -32,6 +35,10 @@ class FailingUsageRecorder:
 
 class AuthenticationError(Exception):
     pass
+
+
+class RateLimitError(Exception):
+    status_code = 429
 
 
 class FakeCompletions:
@@ -91,6 +98,21 @@ def _consolidation_response(
         usage=SimpleNamespace(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+        ),
+    )
+
+
+def _evidence_validation_response(
+    payload: dict,
+    input_tokens: int = 100,
+    output_tokens: int = 20,
+):
+    parsed = EvidenceValidationResult.model_validate(payload)
+    return SimpleNamespace(
+        output_parsed=parsed,
+        usage=SimpleNamespace(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
         ),
     )
 
@@ -337,6 +359,38 @@ def test_authentication_error_is_recorded_without_retry() -> None:
     assert recorder.events[0].retry_count == 0
 
 
+def test_retryable_errors_use_exponential_backoff_before_retry() -> None:
+    recorder = RecordingUsageRecorder()
+    sleep_delays: list[float] = []
+    sdk = FakeSDK(
+        [
+            RateLimitError("rate limited"),
+            RateLimitError("still rate limited"),
+            _response({"candidates": []}),
+        ]
+    )
+    client = OpenAIClient(
+        sdk_client=sdk,
+        usage_recorder=recorder,
+        attempts=3,
+        sleep_func=sleep_delays.append,
+    )
+
+    result = client.parse_structured_output(
+        model="gpt-5.4",
+        system_prompt="Extract signals.",
+        input_payload={"chunk_id": "call_sanitized_chunk_001", "turns": []},
+        response_model=SegmentSignalExtractionResult,
+        context=_context(),
+    )
+
+    assert result.candidates == []
+    assert len(sdk.completions.requests) == 3
+    assert sleep_delays == [60.0, 120.0]
+    assert recorder.events[0].status == "success"
+    assert recorder.events[0].retry_count == 2
+
+
 def test_multiple_chunks_create_multiple_usage_records() -> None:
     recorder = RecordingUsageRecorder()
     client = OpenAIClient(
@@ -447,5 +501,82 @@ def test_consolidation_call_records_cross_segment_usage_context() -> None:
     assert event.agent_name == "ConsolidationRankingAgent"
     assert event.pipeline_step == "consolidation_ranking"
     assert event.prompt_version == "consolidation_ranking_v1"
+    assert event.model == "gpt-5.5"
+    assert event.chunk_id is None
+
+
+def test_evidence_validation_call_records_cross_segment_usage_context() -> None:
+    recorder = RecordingUsageRecorder()
+    client = OpenAIClient(
+        sdk_client=FakeSDK(
+            [
+                _evidence_validation_response(
+                    {
+                        "validated_signals": [
+                            {
+                                "source_ranked_signal_id": "ranked_signal_001",
+                                "item_type": "driver",
+                                "rank": 1,
+                                "category": "Operational support",
+                                "advisor_quote": "I need stronger support.",
+                                "timestamp": "00:01:00",
+                                "evidence_strength": "explicit",
+                                "rationale": "The advisor states a support need.",
+                                "validation_notes": "The quote appears in an advisor turn.",
+                            }
+                        ],
+                        "rejected_signals": [],
+                    },
+                    input_tokens=90,
+                    output_tokens=12,
+                )
+            ]
+        ),
+        usage_recorder=recorder,
+        attempts=1,
+    )
+    prepared = PreparedTranscript(
+        transcript_id="call_sanitized",
+        chunks=[
+            TranscriptChunk(
+                transcript_id="call_sanitized",
+                chunk_id="call_sanitized_chunk_001",
+                turns=[
+                    TranscriptTurn(
+                        sequence=1,
+                        timestamp="00:01:00",
+                        end_timestamp=None,
+                        speaker="Advisor",
+                        speaker_role="advisor",
+                        text="I need stronger support.",
+                    )
+                ],
+            )
+        ],
+    )
+    ranked = [
+        RankedSignal(
+            transcript_id="call_sanitized",
+            item_type="driver",
+            rank=1,
+            category="Operational support",
+            advisor_quote="I need stronger support.",
+            timestamp="00:01:00",
+            evidence_strength="explicit",
+            rationale="The advisor states a support need.",
+            source_chunk_id="call_sanitized_chunk_001",
+        )
+    ]
+
+    validated = EvidenceValidationAgent(
+        llm_client=client,
+        pipeline_run_id="run_sanitized",
+    ).run(ranked, prepared)
+
+    assert len(validated) == 1
+    event = recorder.events[0]
+    assert event.agent_name == "EvidenceValidationAgent"
+    assert event.pipeline_step == "evidence_validation"
+    assert event.prompt_version == "evidence_validation_v1"
     assert event.model == "gpt-5.5"
     assert event.chunk_id is None
