@@ -39,9 +39,27 @@ Agent 2 currently uses:
 - `backend/app/prompts/signal_extraction_v1.md` as the prompt.
 - `SegmentSignalExtractionResult` in `backend/app/llm/structured_outputs.py` as the strict structured output model.
 - `backend/app/llm/openai_client.py` for OpenAI calls, retries, token usage capture, cost estimation, latency, and sanitized failure usage events.
+- `service_tier = DEFAULT_SERVICE_TIER`, which resolves to `flex` by default. Use `service_tier="standard"` only when an individual agent call explicitly needs standard latency.
 - `backend/scripts/run_signal_extraction_for_prepared.py` for local manual smoke tests against `PreparedTranscript` JSON such as `backend/prepared_call_001.local.json`.
 
-The consolidation, evidence validation, and final formatting agents still exist as scaffolding or lightweight placeholder behavior. Treat them as pipeline shape, not final production intelligence, until their prompts, schemas, LLM calls, persistence, validation logic, and tests are completed.
+The Agent 2 local smoke script now disables database usage recording by default so extraction can be tested before Docker/Postgres is running. Pass `--record-usage` only when Postgres is available and migrations have run.
+
+The third agent, `ConsolidationRankingAgent`, is implemented as an LLM-backed transcript-level consolidator in `backend/app/pipeline/agents/consolidation_ranking_agent.py`. It takes Agent 2 `CandidateSignal` objects, makes one structured-output OpenAI call per transcript candidate set, deduplicates overlapping signals, and returns at most three ranked drivers and three ranked blockers as `RankedSignal` objects.
+
+Agent 3 currently uses:
+
+- `CONSOLIDATION_RANKING_MODEL = settings.openai_model`, which defaults to `OPENAI_MODEL=gpt-5.5`.
+- `backend/app/prompts/consolidation_ranking_v1.md` as the prompt.
+- `ConsolidationRankingResult` and `RankedSignalOutput` in `backend/app/llm/structured_outputs.py` as strict structured output models.
+- Deterministic candidate IDs in the LLM payload, shaped as `candidate_001`, `candidate_002`, and so on.
+- `LLMCallContext.chunk_id = None`, because consolidation is cross-segment rather than chunk-level.
+- `service_tier = DEFAULT_SERVICE_TIER`, which resolves to `flex` by default.
+- `backend/scripts/run_consolidation_ranking_for_candidates.py` for local manual smoke tests against Agent 2 candidate JSON such as `backend/signal_candidates.local.json`.
+- `--dry-run-input` on the smoke script to print the exact JSON payload that would be sent to the LLM without calling OpenAI.
+
+The Agent 3 implementation includes post-LLM guardrails: unknown `source_candidate_id` values fail, duplicate selected source candidate IDs fail, item type mismatches between selected output and source candidate fail, ranks must be contiguous within each item type starting at `1`, and output is capped at three per item type. Final `RankedSignal` objects copy `transcript_id` and `source_chunk_id` from the selected known source candidate, not from model-invented fields.
+
+The evidence validation and final formatting agents still exist as scaffolding or lightweight placeholder behavior. Treat them as pipeline shape, not final production intelligence, until their prompts, schemas, LLM calls, persistence, validation logic, and tests are completed.
 
 ## Workflow Shape
 
@@ -133,6 +151,7 @@ The extraction step identifies candidate signals per chunk only from advisor-sid
 `SignalExtractionAgent.run(prepared_transcript: PreparedTranscript) -> list[CandidateSignal]` must keep this contract. It should:
 
 - Process one `PreparedTranscript.chunks[]` item per OpenAI call.
+- Use `service_tier="flex"` by default for each OpenAI call to save cost; pass `service_tier="standard"` only as an explicit per-call override.
 - Send compact chunk JSON with `transcript_id`, `chunk_id`, timestamp range, and ordered turns.
 - Return an empty list for chunks with no supported advisor-side signals.
 - Populate `transcript_id` and `source_chunk_id` deterministically in code, not by trusting the model.
@@ -172,6 +191,23 @@ Do not copy real transcript text or real extracted call output into tests.
 
 The consolidation step merges candidates across chunks and selects at most three drivers and at most three blockers.
 
+`ConsolidationRankingAgent.run(candidates: list[CandidateSignal]) -> list[RankedSignal]` must keep this contract. It should:
+
+- Return `[]` without an LLM call when there are no candidates.
+- Require all candidates to belong to a single transcript.
+- Make one OpenAI structured-output call for the full transcript candidate set.
+- Send compact candidate JSON with `transcript_id`, `candidate_count`, and `candidates[]`.
+- Include deterministic `candidate_id`, `item_type`, `category`, `advisor_quote`, `timestamp`, `evidence_strength`, `rationale`, and `source_chunk_id` for each candidate.
+- Use `chunk_id=None` in `LLMCallContext`.
+- Populate final `RankedSignal.transcript_id` and `RankedSignal.source_chunk_id` from the selected source candidate in code.
+- Call only `backend/app/llm/openai_client.py`, never the OpenAI SDK directly from the agent.
+
+Default model strategy:
+
+- Agent 3 defaults to `OPENAI_MODEL` / `settings.openai_model`, currently `gpt-5.5`.
+- Keep the selected model line obvious near the top of `consolidation_ranking_agent.py`: `CONSOLIDATION_RANKING_MODEL = settings.openai_model`.
+- The constructor can override the model for tests or controlled experiments.
+
 Ranking priorities:
 
 1. Decision relevance.
@@ -181,6 +217,15 @@ Ranking priorities:
 5. Evidence strength.
 
 Prefer explicit evidence, concrete business implications, and concise quotes. Return fewer than three items when evidence is weak.
+
+Use structured outputs and prompt files in `backend/app/prompts/`, especially `consolidation_ranking_v1.md`. The structured output model is `ConsolidationRankingResult` with `ranked_signals`; each ranked output includes `source_candidate_id`, `item_type`, `rank`, `category`, `advisor_quote`, `timestamp`, `evidence_strength`, and `rationale`. Extra fields are forbidden and enum values must validate.
+
+When changing Agent 3, add or update sanitized mocked-OpenAI tests in:
+
+- `backend/tests/test_consolidation_ranking_agent.py`
+- `backend/tests/test_llm_usage_tracking.py`
+
+Do not copy real transcript text or real extracted call output into tests.
 
 ## Evidence Validation Agent
 
@@ -204,6 +249,8 @@ Prefer deterministic formatting after validation has produced clean structured o
 
 Centralize all OpenAI calls through `backend/app/llm/openai_client.py` so model usage cannot bypass logging.
 
+All centralized OpenAI calls must include `service_tier`. The default is `flex` via `DEFAULT_SERVICE_TIER`; future LLM-backed agents should pass that default through unless a specific call is intentionally configured with `service_tier="standard"`.
+
 Persist an LLM usage event per model call in `llm_usage_events`. The current implementation includes:
 
 - Model: `backend/app/db/models/llm_usage_event.py`
@@ -226,7 +273,88 @@ Keep model IDs, prompt versions, schema versions, temperatures, max output token
 
 Current pricing config lives in `backend/app/core/config.py` as `openai_model_pricing_usd_per_1m_tokens`; cost calculation lives in `backend/app/llm/pricing.py`. The selected pricing version is `settings.openai_pricing_version`, and each persisted usage event stores that version for reproducibility.
 
-Agent 2 candidate outputs are currently returned in memory and can be written locally with `backend/scripts/run_signal_extraction_for_prepared.py --output <path>`. The raw per-chunk structured response body is not yet persisted; only usage metadata is persisted in `llm_usage_events`.
+Agent 2 candidate outputs are currently returned in memory and can be written locally with `backend/scripts/run_signal_extraction_for_prepared.py --output <path>`. Agent 3 ranked outputs can be written locally with `backend/scripts/run_consolidation_ranking_for_candidates.py --output <path>`. The raw per-chunk and cross-segment structured response bodies are not yet persisted; only usage metadata is persisted in `llm_usage_events`.
+
+`OpenAIClient` retry behavior is intentionally bounded:
+
+- Retry transient OpenAI/server failures such as rate limits and 5xx errors.
+- Do not retry non-retryable configuration/request errors such as `AuthenticationError`, `BadRequestError`, `NotFoundError`, or `PermissionDeniedError`.
+- Do not let a usage-recorder failure cause duplicate successful OpenAI calls.
+- Record sanitized failed usage events when usage recording is enabled and the database is reachable.
+
+## Local Setup and Smoke Testing
+
+Run backend commands from `backend/` unless the command explicitly passes `-c backend/alembic.ini`.
+
+Alembic is installed as a Python module in the observed Windows setup, but the `alembic` executable may not be on PowerShell `PATH`. Prefer:
+
+```powershell
+cd D:\development\optimize-financial\backend
+python -m alembic upgrade head
+```
+
+From the repo root, use:
+
+```powershell
+python -m alembic -c backend\alembic.ini upgrade head
+```
+
+`backend/migrations/env.py` is required and should remain present. It loads `settings.database_url`, imports `app.db.models`, and exposes `Base.metadata` to Alembic.
+
+The root `.env` is intended for host-local development:
+
+```env
+DATABASE_URL=postgresql+psycopg://advisor:advisor@localhost:5432/advisor_signal_extraction
+REDIS_URL=redis://localhost:6379/0
+```
+
+Docker Compose overrides backend and worker service URLs back to Compose service names:
+
+```env
+DATABASE_URL=postgresql+psycopg://advisor:advisor@postgres:5432/advisor_signal_extraction
+REDIS_URL=redis://redis:6379/0
+```
+
+If host PowerShell reports `failed to resolve host 'postgres'`, the host process is reading Docker-only database settings. Fix the root `.env` to use `localhost`.
+
+To test Agent 2 without database usage persistence:
+
+```powershell
+cd D:\development\optimize-financial\backend
+python scripts\run_signal_extraction_for_prepared.py prepared_call_001.local.json --output signal_candidates.local.json
+```
+
+To test Agent 2 with usage persistence:
+
+```powershell
+cd D:\development\optimize-financial\backend
+python -m alembic upgrade head
+python scripts\run_signal_extraction_for_prepared.py prepared_call_001.local.json --output signal_candidates.local.json --record-usage
+```
+
+To inspect the exact Agent 3 LLM input payload without calling OpenAI:
+
+```powershell
+cd D:\development\optimize-financial\backend
+python scripts\run_consolidation_ranking_for_candidates.py signal_candidates.local.json --dry-run-input
+```
+
+To test Agent 3 without database usage persistence:
+
+```powershell
+cd D:\development\optimize-financial\backend
+python scripts\run_consolidation_ranking_for_candidates.py signal_candidates.local.json --output ranked_signals.local.json
+```
+
+To test Agent 3 with usage persistence:
+
+```powershell
+cd D:\development\optimize-financial\backend
+python -m alembic upgrade head
+python scripts\run_consolidation_ranking_for_candidates.py signal_candidates.local.json --output ranked_signals.local.json --record-usage
+```
+
+If `--record-usage` reaches OpenAI and fails with `openai.AuthenticationError` / 401, the DB path is working and the configured `OPENAI_API_KEY` is invalid, revoked, or malformed. Keep `OPENAI_API_KEY` on exactly one physical line in `.env`; never paste or print the secret in logs or committed docs.
 
 ## Data Safety
 

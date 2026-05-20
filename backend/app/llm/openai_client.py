@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, Protocol, TypeVar
+from typing import Any, Literal, Protocol, TypeVar
 
 from openai import OpenAI
 from pydantic import BaseModel
@@ -13,6 +13,8 @@ from app.services.llm_usage_service import LLMUsageEventCreate
 
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel)
+ServiceTier = Literal["flex", "standard"]
+DEFAULT_SERVICE_TIER: ServiceTier = "flex"
 
 
 def get_openai_client() -> OpenAI:
@@ -56,7 +58,9 @@ class OpenAIClient:
         response_model: type[ResponseModelT],
         context: LLMCallContext,
         max_output_tokens: int = settings.openai_max_output_tokens,
+        service_tier: ServiceTier = DEFAULT_SERVICE_TIER,
     ) -> ResponseModelT:
+        self._validate_service_tier(service_tier)
         started_at = time.perf_counter()
         last_error: Exception | None = None
         last_input_tokens = 0
@@ -72,6 +76,7 @@ class OpenAIClient:
                     input_payload=input_payload,
                     response_model=response_model,
                     max_output_tokens=max_output_tokens,
+                    service_tier=service_tier,
                 )
                 latency_ms = self._elapsed_ms(started_at)
                 input_tokens, output_tokens = self._extract_token_usage(response)
@@ -125,9 +130,11 @@ class OpenAIClient:
         input_payload: dict[str, Any],
         response_model: type[ResponseModelT],
         max_output_tokens: int,
+        service_tier: ServiceTier,
     ) -> Any:
         request: dict[str, Any] = {
             "model": model,
+            "service_tier": service_tier,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {
@@ -232,6 +239,10 @@ class OpenAIClient:
             "PermissionDeniedError",
         }
         return error.__class__.__name__ not in non_retryable_error_names
+
+    def _validate_service_tier(self, service_tier: str) -> None:
+        if service_tier not in ("flex", "standard"):
+            raise ValueError("service_tier must be 'flex' or 'standard'")
 
     def _elapsed_ms(self, started_at: float) -> int:
         return max(0, int((time.perf_counter() - started_at) * 1000))

@@ -116,6 +116,7 @@ Important backend concerns:
 - Use FastAPI, Pydantic, SQLAlchemy, Alembic, Celery/Redis, PostgreSQL, and the OpenAI Python SDK.
 - Keep prompt files in `backend/app/prompts/` with explicit version suffixes such as `_v1.md`.
 - Keep model IDs, prompt versions, temperature, max output tokens, and schema versions in configuration or persisted pipeline metadata.
+- Every OpenAI-backed agent call must use `service_tier: "flex"` by default to reduce cost. Only set `service_tier: "standard"` explicitly on an individual agent call when that call needs standard latency.
 - Persist rejected candidates and validation notes for auditability and self-assessment.
 - Log token usage, latency, model name, prompt version, retry count, and failure reason per LLM call.
 - Add application error monitoring, preferably Sentry or a Sentry-compatible service, for backend API errors, worker failures, unhandled exceptions, and frontend runtime errors.
@@ -193,6 +194,17 @@ Rules:
 
 Purpose: merge candidates across chunks and select the strongest supported signals.
 
+Current implementation:
+
+- Implemented in `backend/app/pipeline/agents/consolidation_ranking_agent.py`.
+- Uses one OpenAI structured-output call per transcript candidate set.
+- Defaults to `settings.openai_model`, currently `OPENAI_MODEL=gpt-5.5`, through `CONSOLIDATION_RANKING_MODEL`.
+- Uses prompt `backend/app/prompts/consolidation_ranking_v1.md` and prompt version `consolidation_ranking_v1`.
+- Uses strict structured output models `RankedSignalOutput` and `ConsolidationRankingResult` in `backend/app/llm/structured_outputs.py`.
+- Uses `LLMCallContext` with agent name `ConsolidationRankingAgent`, pipeline step `consolidation_ranking`, and `chunk_id=None` because ranking is cross-segment.
+- Preserves `run(candidates: list[CandidateSignal]) -> list[RankedSignal]` so the orchestrator contract stays unchanged.
+- Returns `[]` without an LLM call when no candidates exist.
+
 Responsibilities:
 
 - Deduplicate similar candidates.
@@ -209,6 +221,36 @@ Ranking criteria:
 3. Specificity: Is it concrete rather than generic curiosity?
 4. Gating power or urgency: Could it accelerate, prevent, or delay action?
 5. Evidence strength: Explicit evidence beats implied evidence.
+
+Agent 3 input payload shape:
+
+```json
+{
+  "transcript_id": "call_001",
+  "candidate_count": 2,
+  "candidates": [
+    {
+      "candidate_id": "candidate_001",
+      "item_type": "driver",
+      "category": "Operational support",
+      "advisor_quote": "I need stronger operations support.",
+      "timestamp": "00:01:00",
+      "evidence_strength": "explicit",
+      "rationale": "The advisor states a support need.",
+      "source_chunk_id": "call_001_chunk_001"
+    }
+  ]
+}
+```
+
+Post-LLM guardrails:
+
+- Validate `source_candidate_id` exists.
+- Reject duplicate selected `source_candidate_id` values.
+- Enforce max three selected outputs per `item_type`.
+- Enforce contiguous ranks within each item type starting at `1`.
+- Reject model output whose `item_type` does not match the selected source candidate.
+- Construct final `RankedSignal` objects in code using the selected source candidate's `transcript_id` and `source_chunk_id`.
 
 ### 4. Evidence Validation / Critic Agent
 
@@ -246,12 +288,20 @@ API snippets should show:
 - Input message structure.
 - Structured output JSON schema.
 - Temperature and relevant parameters.
+- `service_tier: "flex"` by default, with `service_tier: "standard"` only for explicitly latency-sensitive agent calls.
 - Retry/error behavior.
 - Token usage logging.
 - Estimated cost calculation.
 - Prompt/model version pinning.
 
 Use structured outputs for extraction, ranking, validation, and final formatting. Do not rely on free-form JSON in production paths.
+
+Local smoke scripts:
+
+- Agent 2 extraction: `backend/scripts/run_signal_extraction_for_prepared.py`.
+- Agent 3 consolidation/ranking: `backend/scripts/run_consolidation_ranking_for_candidates.py`.
+- Agent 3 supports `--dry-run-input` to print the exact JSON input payload without calling OpenAI.
+- Both Agent 2 and Agent 3 smoke scripts disable database usage recording by default; pass `--record-usage` only when Postgres is available and migrations have run.
 
 ## Model Strategy
 
@@ -335,6 +385,7 @@ For each LLM call, persist a usage record with at least:
 
 - `pipeline_run_id`
 - `transcript_id`
+- `chunk_id` when applicable; use `null` for transcript-level cross-segment calls such as consolidation/ranking
 - `agent_name`
 - `pipeline_step`
 - `model`
@@ -356,6 +407,7 @@ Recommended implementation:
 - Add an `llm_usage_events` or similarly named PostgreSQL table.
 - Centralize OpenAI calls through `backend/app/llm/openai_client.py` so usage tracking cannot be bypassed.
 - Keep model pricing in versioned configuration, not hardcoded inside agents.
+- Centralized OpenAI calls must send `service_tier: "flex"` unless the specific agent call passes `service_tier: "standard"`.
 - Store price version or pricing timestamp with each usage event so historical costs remain explainable after pricing changes.
 - Capture usage from OpenAI API responses whenever available.
 - On failed calls, persist the attempted model, agent, prompt version, latency, retry count, and sanitized error class.

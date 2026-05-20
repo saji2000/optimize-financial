@@ -162,6 +162,24 @@ def test_signal_extraction_adds_transcript_id_and_source_chunk_id_deterministica
     assert candidate.source_chunk_id == "call_sanitized_chunk_001"
 
 
+def test_signal_extraction_uses_flex_service_tier_by_default() -> None:
+    llm_client = FakeLLMClient([SegmentSignalExtractionResult(candidates=[])])
+    prepared = _prepared_with_turns([_turn(text="I need stronger operations support.")])
+
+    SignalExtractionAgent(llm_client=llm_client).run(prepared)
+
+    assert llm_client.calls[0]["service_tier"] == "flex"
+
+
+def test_signal_extraction_can_use_standard_service_tier_when_requested() -> None:
+    llm_client = FakeLLMClient([SegmentSignalExtractionResult(candidates=[])])
+    prepared = _prepared_with_turns([_turn(text="I need stronger operations support.")])
+
+    SignalExtractionAgent(llm_client=llm_client, service_tier="standard").run(prepared)
+
+    assert llm_client.calls[0]["service_tier"] == "standard"
+
+
 def test_signal_extraction_rejects_malformed_structured_output() -> None:
     malformed_payload = {
         "candidates": [

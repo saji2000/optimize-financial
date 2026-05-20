@@ -1,7 +1,12 @@
 from typing import Any
 
 from app.core.config import settings
-from app.llm.openai_client import LLMCallContext, OpenAIClient
+from app.llm.openai_client import (
+    DEFAULT_SERVICE_TIER,
+    LLMCallContext,
+    OpenAIClient,
+    ServiceTier,
+)
 from app.llm.prompt_loader import load_prompt
 from app.llm.structured_outputs import SegmentSignalExtractionResult
 from app.pipeline.schemas import CandidateSignal, PreparedTranscript, TranscriptChunk
@@ -21,10 +26,12 @@ class SignalExtractionAgent:
         llm_client: OpenAIClient | None = None,
         pipeline_run_id: str | None = None,
         model: str = SIGNAL_EXTRACTION_MODEL,
+        service_tier: ServiceTier = DEFAULT_SERVICE_TIER,
     ) -> None:
         self.llm_client = llm_client or OpenAIClient(usage_recorder=LLMUsageService())
         self.pipeline_run_id = pipeline_run_id
         self.model = model
+        self.service_tier = service_tier
         self.system_prompt = load_prompt(SIGNAL_EXTRACTION_PROMPT)
 
     def run(self, prepared_transcript: PreparedTranscript) -> list[CandidateSignal]:
@@ -52,6 +59,7 @@ class SignalExtractionAgent:
             system_prompt=self.system_prompt,
             input_payload=self._chunk_payload(prepared_transcript.transcript_id, chunk),
             response_model=SegmentSignalExtractionResult,
+            service_tier=self.service_tier,
             context=LLMCallContext(
                 pipeline_run_id=self.pipeline_run_id,
                 transcript_id=prepared_transcript.transcript_id,
