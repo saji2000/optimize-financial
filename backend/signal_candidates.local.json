@@ -1,0 +1,252 @@
+[
+  {
+    "transcript_id": "call_001",
+    "item_type": "blocker",
+    "category": "Compensation economics",
+    "advisor_quote": "I'm on the higher end of the grid level. Don't I like the grid system? Don't I like getting comped more?",
+    "timestamp": "00:11:24.400",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor explicitly raises that their current high payout grid may already favor them, reducing motivation to switch.",
+    "source_chunk_id": "call_001_chunk_001"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "blocker",
+    "category": "Insurance book portability",
+    "advisor_quote": "I don't own it. I don't own it. [CURRENT_DEALER] does.",
+    "timestamp": "00:14:08.850",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor states a structural limitation: the current firm owns the insurance book, which impedes portability in a transition.",
+    "source_chunk_id": "call_001_chunk_001"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "blocker",
+    "category": "Transition complexity",
+    "advisor_quote": "I can't move my insurance with me.",
+    "timestamp": "00:14:19.870",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor directly identifies a concrete transition obstacle involving inability to transfer insurance business.",
+    "source_chunk_id": "call_001_chunk_001"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "blocker",
+    "category": "Compensation risk",
+    "advisor_quote": "My core would get cut off if I started moving clients out",
+    "timestamp": "00:14:37.300",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor explicitly notes a financial downside tied to moving clients, which could delay or prevent a move.",
+    "source_chunk_id": "call_001_chunk_001"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "blocker",
+    "category": "Retirement timeline",
+    "advisor_quote": "What if I don't want to work for 7 or 8 more years?",
+    "timestamp": "00:18:50.180",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor questions the required asset retention/work timeline, signaling a potential mismatch with personal timing.",
+    "source_chunk_id": "call_001_chunk_001"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "driver",
+    "category": "Client service model",
+    "advisor_quote": "high net worth people want to see the one-stop shop",
+    "timestamp": "00:29:22.250",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor explicitly endorses the value of an integrated service model for clients, which aligns with Optimize's offering.",
+    "source_chunk_id": "call_001_chunk_001"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "driver",
+    "category": "Operational support",
+    "advisor_quote": "The industry's going this way, I'd like to see that [CURRENT_DEALER], for now, is on board with it as a pilot, but I need to know that you guys are already there.",
+    "timestamp": "00:29:35.530",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor expresses a clear need for already-established integrated capabilities rather than a pilot-stage offering, indicating evaluation criteria that could favor Optimize.",
+    "source_chunk_id": "call_001_chunk_001"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "driver",
+    "category": "Client experience control",
+    "advisor_quote": "That gives me, the advisor, a better chance to quarterback it.",
+    "timestamp": "00:34:05.210",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor directly values having more control over the client relationship and coordination of services.",
+    "source_chunk_id": "call_001_chunk_002"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "driver",
+    "category": "Current referral/service frustration",
+    "advisor_quote": "I passed referrals off to [FINANCIAL_INSTITUTION] before, and the rep no-showed my client, and my client's mad at me",
+    "timestamp": "00:34:09.489",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor cites a concrete bad service experience that harmed the client relationship.",
+    "source_chunk_id": "call_001_chunk_002"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "driver",
+    "category": "Operational control",
+    "advisor_quote": "So, I'd like to take that out if possible.",
+    "timestamp": "00:34:16.420",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor explicitly wants to remove reliance on outside reps, signaling interest in a model with more direct control.",
+    "source_chunk_id": "call_001_chunk_002"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "driver",
+    "category": "Compliance support",
+    "advisor_quote": "That's a different world than what I'm used to. I can't send an email without compliance looking at it",
+    "timestamp": "00:36:10.080",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor contrasts current restrictive compliance environment with Optimize's materials, indicating value in more usable compliance support.",
+    "source_chunk_id": "call_001_chunk_002"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "driver",
+    "category": "Current firm frustration",
+    "advisor_quote": "Yeah, I feel like we're herded cattle, just following.",
+    "timestamp": "00:36:47.280",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor expresses clear dissatisfaction with how the current firm treats advisors.",
+    "source_chunk_id": "call_001_chunk_002"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "blocker",
+    "category": "Product shelf limitation",
+    "advisor_quote": "So, can I still, buy Fidelity funds, for example, or sell Fidelity funds, for example?",
+    "timestamp": "00:39:25.490",
+    "evidence_strength": "implied",
+    "rationale": "Advisor is probing loss of open-architecture fund access, which could be a meaningful constraint if moving to a proprietary platform.",
+    "source_chunk_id": "call_001_chunk_002"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "blocker",
+    "category": "Investment solution gap",
+    "advisor_quote": "Part of a real tool to help that market is corporate class funds, but we don't have any, and we're trying to target that market, is that right?",
+    "timestamp": "00:40:19.640",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor identifies a missing product capability relevant to his target non-registered client segment.",
+    "source_chunk_id": "call_001_chunk_002"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "driver",
+    "category": "Technology cost burden",
+    "advisor_quote": "I don't pay any dealer fees, per se, but I have to pay, some technology.",
+    "timestamp": "00:47:04.190",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor directly states current out-of-pocket technology costs, which increases appeal of bundled platform support.",
+    "source_chunk_id": "call_001_chunk_002"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "driver",
+    "category": "Technology stack burden",
+    "advisor_quote": "I have Salesforce, and OnePlan, and hearsay, and all that stuff.",
+    "timestamp": "00:47:05.200",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor describes a fragmented tech stack, supporting interest in an integrated platform.",
+    "source_chunk_id": "call_001_chunk_002"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "driver",
+    "category": "Team scaling cost",
+    "advisor_quote": "I have to pay for it for my… I just hired my old manager, actually, I have to pay for it for him, and then my staff member, I have to pay for it for her.",
+    "timestamp": "00:47:21.810",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor highlights rising technology costs as the team grows, a clear business pain point.",
+    "source_chunk_id": "call_001_chunk_002"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "driver",
+    "category": "Current firm frustration",
+    "advisor_quote": "They brainwashed us.",
+    "timestamp": "00:48:24.220",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor expresses strong negative sentiment toward current-firm conditioning, indicating openness to alternatives.",
+    "source_chunk_id": "call_001_chunk_002"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "blocker",
+    "category": "Due diligence and sales process change",
+    "advisor_quote": "my whole… I have to relearn how to sell.",
+    "timestamp": "00:50:50.090",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor directly states the move would require changing his established sales and recommendation process.",
+    "source_chunk_id": "call_001_chunk_002"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "blocker",
+    "category": "Compliance and comparability concern",
+    "advisor_quote": "Compliance-wise, regulation-wise, I can say, hey, listen, it's this, this, and this.",
+    "timestamp": "00:51:52.070",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor relies on third-party fund classification and comparability for compliance support, suggesting concern with proprietary funds lacking that framework.",
+    "source_chunk_id": "call_001_chunk_002"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "driver",
+    "category": "Business growth support",
+    "advisor_quote": "I'm confident that that can grow.",
+    "timestamp": "00:56:30.680",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor expresses confidence in continued practice growth, making support for scaling more decision-relevant.",
+    "source_chunk_id": "call_001_chunk_002"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "driver",
+    "category": "Work-life balance and operational leverage",
+    "advisor_quote": "I was working too late, and it's not about comp anymore.",
+    "timestamp": "00:57:12.880",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor explicitly prioritizes reducing workload over maximizing compensation, indicating value in a platform that improves efficiency.",
+    "source_chunk_id": "call_001_chunk_002"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "driver",
+    "category": "Lifestyle and flexibility goal",
+    "advisor_quote": "I have all this stuff, but I can't use it if I'm working all the time.",
+    "timestamp": "00:57:47.330",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor states a personal business goal of having more time and flexibility, which can motivate consideration of operational support.",
+    "source_chunk_id": "call_001_chunk_002"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "driver",
+    "category": "Operational overload",
+    "advisor_quote": "Too many.",
+    "timestamp": "00:59:22.030",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor describes current household load as excessive, signaling need for efficiency and support.",
+    "source_chunk_id": "call_001_chunk_002"
+  },
+  {
+    "transcript_id": "call_001",
+    "item_type": "driver",
+    "category": "Concrete evaluation next step",
+    "advisor_quote": "We're moving forward.",
+    "timestamp": "01:07:47.740",
+    "evidence_strength": "explicit",
+    "rationale": "Advisor explicitly indicates intent to continue the evaluation process beyond this call.",
+    "source_chunk_id": "call_001_chunk_003"
+  }
+]

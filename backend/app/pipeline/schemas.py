@@ -16,7 +16,6 @@ class TranscriptTurn(BaseModel):
     end_timestamp: str | None = None
     speaker: str
     speaker_role: str
-    speaker_role_confidence: str = "low"
     text: str
 
 

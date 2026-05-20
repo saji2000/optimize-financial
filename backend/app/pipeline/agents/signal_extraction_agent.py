@@ -1,110 +1,83 @@
-from app.domain.enums import EvidenceStrength, SignalType
-from app.pipeline.schemas import CandidateSignal, PreparedTranscript, TranscriptTurn
+from typing import Any
+
+from app.core.config import settings
+from app.llm.openai_client import LLMCallContext, OpenAIClient
+from app.llm.prompt_loader import load_prompt
+from app.llm.structured_outputs import SegmentSignalExtractionResult
+from app.pipeline.schemas import CandidateSignal, PreparedTranscript, TranscriptChunk
+from app.services.llm_usage_service import LLMUsageService
 
 
-DRIVER_RULES = [
-    (
-        "Technology improvement",
-        ("technology", "tech", "portal", "platform", "digital", "software"),
-        "The advisor identifies technology or platform capability as a reason to evaluate Optimize.",
-    ),
-    (
-        "Operational support",
-        ("support", "operations", "admin", "paperwork", "service"),
-        "The advisor identifies support or operational leverage as relevant to moving forward.",
-    ),
-    (
-        "Compensation economics",
-        ("payout", "compensation", "economics", "revenue", "pricing"),
-        "The advisor raises economics in a way that could motivate evaluation.",
-    ),
-    (
-        "Business growth",
-        ("grow", "growth", "scale", "new clients", "referrals"),
-        "The advisor links the decision to business growth or scaling goals.",
-    ),
-    (
-        "Current firm frustration",
-        ("frustrated", "pain", "problem", "not happy", "slow", "broken"),
-        "The advisor describes dissatisfaction with the current setup.",
-    ),
-]
-
-BLOCKER_RULES = [
-    (
-        "Transition complexity",
-        ("transition", "transfer", "paperwork", "migration"),
-        "The advisor identifies transition effort or migration risk as a potential delay.",
-    ),
-    (
-        "Client attrition risk",
-        ("clients leave", "client attrition", "lose clients", "client reaction"),
-        "The advisor raises client retention as a gating concern.",
-    ),
-    (
-        "Decision dependency",
-        ("partner", "team", "approval", "committee", "boss", "decision maker"),
-        "The advisor indicates another stakeholder must be involved before moving forward.",
-    ),
-    (
-        "Contractual restriction",
-        ("contract", "non-compete", "restriction", "notice period"),
-        "The advisor raises a contractual or timing constraint.",
-    ),
-    (
-        "Lack of urgency",
-        ("not urgent", "no rush", "next year", "later", "not ready"),
-        "The advisor signals limited urgency or a delayed decision timeline.",
-    ),
-]
+SIGNAL_EXTRACTION_MODEL = settings.openai_model_mid
+SIGNAL_EXTRACTION_PROMPT = "signal_extraction_v1.md"
+SIGNAL_EXTRACTION_PROMPT_VERSION = "signal_extraction_v1"
+SIGNAL_EXTRACTION_AGENT_NAME = "SignalExtractionAgent"
+SIGNAL_EXTRACTION_PIPELINE_STEP = "segment_signal_extraction"
 
 
 class SignalExtractionAgent:
+    def __init__(
+        self,
+        llm_client: OpenAIClient | None = None,
+        pipeline_run_id: str | None = None,
+        model: str = SIGNAL_EXTRACTION_MODEL,
+    ) -> None:
+        self.llm_client = llm_client or OpenAIClient(usage_recorder=LLMUsageService())
+        self.pipeline_run_id = pipeline_run_id
+        self.model = model
+        self.system_prompt = load_prompt(SIGNAL_EXTRACTION_PROMPT)
+
     def run(self, prepared_transcript: PreparedTranscript) -> list[CandidateSignal]:
         candidates: list[CandidateSignal] = []
         for chunk in prepared_transcript.chunks:
-            for turn in chunk.turns:
-                if turn.speaker_role != "advisor":
-                    continue
-                candidates.extend(self._extract_from_turn(prepared_transcript.transcript_id, chunk.chunk_id, turn))
+            if not chunk.turns:
+                continue
+
+            result = self._extract_chunk(prepared_transcript, chunk)
+            for item in result.candidates:
+                candidates.append(
+                    CandidateSignal(
+                        transcript_id=prepared_transcript.transcript_id,
+                        source_chunk_id=chunk.chunk_id,
+                        **item.model_dump(),
+                    )
+                )
         return candidates
 
-    def _extract_from_turn(
-        self, transcript_id: str, chunk_id: str, turn: TranscriptTurn
-    ) -> list[CandidateSignal]:
-        text = turn.text.lower()
-        results: list[CandidateSignal] = []
+    def _extract_chunk(
+        self, prepared_transcript: PreparedTranscript, chunk: TranscriptChunk
+    ) -> SegmentSignalExtractionResult:
+        raw_result = self.llm_client.parse_structured_output(
+            model=self.model,
+            system_prompt=self.system_prompt,
+            input_payload=self._chunk_payload(prepared_transcript.transcript_id, chunk),
+            response_model=SegmentSignalExtractionResult,
+            context=LLMCallContext(
+                pipeline_run_id=self.pipeline_run_id,
+                transcript_id=prepared_transcript.transcript_id,
+                chunk_id=chunk.chunk_id,
+                agent_name=SIGNAL_EXTRACTION_AGENT_NAME,
+                pipeline_step=SIGNAL_EXTRACTION_PIPELINE_STEP,
+                prompt_version=SIGNAL_EXTRACTION_PROMPT_VERSION,
+            ),
+        )
+        return SegmentSignalExtractionResult.model_validate(raw_result)
 
-        for category, keywords, rationale in DRIVER_RULES:
-            if any(keyword in text for keyword in keywords):
-                results.append(
-                    CandidateSignal(
-                        transcript_id=transcript_id,
-                        item_type=SignalType.DRIVER,
-                        category=category,
-                        advisor_quote=turn.text,
-                        timestamp=turn.timestamp,
-                        evidence_strength=EvidenceStrength.EXPLICIT,
-                        rationale=rationale,
-                        source_chunk_id=chunk_id,
-                    )
-                )
-                break
-
-        for category, keywords, rationale in BLOCKER_RULES:
-            if any(keyword in text for keyword in keywords):
-                results.append(
-                    CandidateSignal(
-                        transcript_id=transcript_id,
-                        item_type=SignalType.BLOCKER,
-                        category=category,
-                        advisor_quote=turn.text,
-                        timestamp=turn.timestamp,
-                        evidence_strength=EvidenceStrength.EXPLICIT,
-                        rationale=rationale,
-                        source_chunk_id=chunk_id,
-                    )
-                )
-                break
-
-        return results
+    def _chunk_payload(self, transcript_id: str, chunk: TranscriptChunk) -> dict[str, Any]:
+        return {
+            "transcript_id": transcript_id,
+            "chunk_id": chunk.chunk_id,
+            "start_timestamp": chunk.start_timestamp,
+            "end_timestamp": chunk.end_timestamp,
+            "turns": [
+                {
+                    "sequence": turn.sequence,
+                    "timestamp": turn.timestamp,
+                    "end_timestamp": turn.end_timestamp,
+                    "speaker": turn.speaker,
+                    "speaker_role": turn.speaker_role,
+                    "text": turn.text,
+                }
+                for turn in chunk.turns
+            ],
+        }
