@@ -74,3 +74,22 @@ class EvidenceValidationResult(BaseModel):
 
     validated_signals: list[ValidatedSignalOutput] = Field(default_factory=list)
     rejected_signals: list[RejectedSignalOutput] = Field(default_factory=list)
+
+
+class FinalSignalOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_validated_signal_id: str = Field(min_length=1)
+    item_type: SignalType
+    rank: int = Field(ge=1)
+    category: str = Field(min_length=1)
+    advisor_quote: str = Field(min_length=1)
+    timestamp: str | None = None
+    evidence_strength: EvidenceStrength
+    rationale: str = Field(min_length=1)
+
+
+class FinalFormattingResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    final_signals: list[FinalSignalOutput] = Field(default_factory=list)
