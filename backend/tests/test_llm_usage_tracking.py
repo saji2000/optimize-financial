@@ -47,9 +47,23 @@ class FakeCompletions:
         return response
 
 
+class FakeResponses:
+    def __init__(self, responses: list[object]) -> None:
+        self.responses = responses
+        self.requests = []
+
+    def parse(self, **request):
+        self.requests.append(request)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
 class FakeSDK:
     def __init__(self, responses: list[object]) -> None:
         self.completions = FakeCompletions(responses)
+        self.responses = FakeResponses(responses)
         self.beta = SimpleNamespace(
             chat=SimpleNamespace(completions=self.completions),
         )
@@ -77,6 +91,17 @@ def _consolidation_response(
         usage=SimpleNamespace(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+        ),
+    )
+
+
+def _responses_response(payload: dict, input_tokens: int = 100, output_tokens: int = 20):
+    parsed = SegmentSignalExtractionResult.model_validate(payload)
+    return SimpleNamespace(
+        output_parsed=parsed,
+        usage=SimpleNamespace(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
         ),
     )
 
@@ -141,7 +166,36 @@ def test_chunk_call_can_override_service_tier_to_standard() -> None:
         service_tier="standard",
     )
 
-    assert client.sdk_client.completions.requests[0]["service_tier"] == "standard"
+    assert client.sdk_client.completions.requests[0]["service_tier"] == "default"
+
+
+def test_responses_endpoint_uses_text_format_and_records_usage() -> None:
+    recorder = RecordingUsageRecorder()
+    client = OpenAIClient(
+        sdk_client=FakeSDK([_responses_response({"candidates": []})]),
+        usage_recorder=recorder,
+        attempts=1,
+    )
+
+    result = client.parse_structured_output(
+        model="gpt-5.5",
+        system_prompt="Extract signals.",
+        input_payload={"chunk_id": "call_sanitized_chunk_001", "turns": []},
+        response_model=SegmentSignalExtractionResult,
+        context=_context(),
+        service_tier="standard",
+        endpoint="responses",
+    )
+
+    assert result.candidates == []
+    request = client.sdk_client.responses.requests[0]
+    assert request["service_tier"] == "default"
+    assert request["instructions"] == "Extract signals."
+    assert request["text_format"] is SegmentSignalExtractionResult
+    assert request["max_output_tokens"] > 0
+    assert recorder.events[0].model == "gpt-5.5"
+    assert recorder.events[0].input_tokens == 100
+    assert recorder.events[0].output_tokens == 20
 
 
 def test_invalid_service_tier_is_rejected_before_openai_call() -> None:
@@ -161,6 +215,57 @@ def test_invalid_service_tier_is_rejected_before_openai_call() -> None:
         )
 
     assert client.sdk_client.completions.requests == []
+
+
+def test_invalid_endpoint_is_rejected_before_openai_call() -> None:
+    client = OpenAIClient(
+        sdk_client=FakeSDK([_response({"candidates": []})]),
+        attempts=1,
+    )
+
+    with pytest.raises(ValueError, match="endpoint"):
+        client.parse_structured_output(
+            model="gpt-5.4",
+            system_prompt="Extract signals.",
+            input_payload={"chunk_id": "call_sanitized_chunk_001", "turns": []},
+            response_model=SegmentSignalExtractionResult,
+            context=_context(),
+            endpoint="legacy",
+        )
+
+    assert client.sdk_client.completions.requests == []
+    assert client.sdk_client.responses.requests == []
+
+
+def test_failed_call_logs_sanitized_openai_metadata_without_transcript_text(caplog) -> None:
+    class OpenAIInternalServerError(Exception):
+        status_code = 500
+        request_id = "req_sanitized"
+
+    client = OpenAIClient(
+        sdk_client=FakeSDK([OpenAIInternalServerError("SECRET TRANSCRIPT TEXT")]),
+        attempts=1,
+    )
+
+    with caplog.at_level("WARNING"), pytest.raises(OpenAIInternalServerError):
+        client.parse_structured_output(
+            model="gpt-5.5",
+            system_prompt="Extract signals.",
+            input_payload={"text": "SECRET TRANSCRIPT TEXT"},
+            response_model=SegmentSignalExtractionResult,
+            context=_context(),
+            service_tier="standard",
+            endpoint="responses",
+        )
+
+    assert "request_id=req_sanitized" in caplog.text
+    assert "status_code=500" in caplog.text
+    assert "model=gpt-5.5" in caplog.text
+    assert "endpoint=responses" in caplog.text
+    assert "service_tier=standard" in caplog.text
+    assert "api_service_tier=default" in caplog.text
+    assert "agent_name=SignalExtractionAgent" in caplog.text
+    assert "SECRET" not in caplog.text
 
 
 def test_failed_chunk_call_records_sanitized_error_metadata_without_transcript_text() -> None:
