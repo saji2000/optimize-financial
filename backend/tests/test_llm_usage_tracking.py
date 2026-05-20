@@ -3,9 +3,18 @@ from types import SimpleNamespace
 import pytest
 
 from app.llm.openai_client import LLMCallContext, OpenAIClient
-from app.llm.structured_outputs import SegmentSignalExtractionResult
+from app.llm.structured_outputs import (
+    ConsolidationRankingResult,
+    SegmentSignalExtractionResult,
+)
+from app.pipeline.agents.consolidation_ranking_agent import ConsolidationRankingAgent
 from app.pipeline.agents.signal_extraction_agent import SignalExtractionAgent
-from app.pipeline.schemas import PreparedTranscript, TranscriptChunk, TranscriptTurn
+from app.pipeline.schemas import (
+    CandidateSignal,
+    PreparedTranscript,
+    TranscriptChunk,
+    TranscriptTurn,
+)
 
 
 class RecordingUsageRecorder:
@@ -57,6 +66,21 @@ def _response(payload: dict, prompt_tokens: int = 100, completion_tokens: int = 
     )
 
 
+def _consolidation_response(
+    payload: dict,
+    prompt_tokens: int = 100,
+    completion_tokens: int = 20,
+):
+    parsed = ConsolidationRankingResult.model_validate(payload)
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(parsed=parsed, content=None))],
+        usage=SimpleNamespace(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        ),
+    )
+
+
 def _context(chunk_id: str = "call_sanitized_chunk_001") -> LLMCallContext:
     return LLMCallContext(
         pipeline_run_id="run_sanitized",
@@ -85,6 +109,8 @@ def test_successful_chunk_call_records_usage_tokens_cost_latency_and_status() ->
     )
 
     assert result.candidates == []
+    request = client.sdk_client.completions.requests[0]
+    assert request["service_tier"] == "flex"
     event = recorder.events[0]
     assert event.model == "gpt-5.4"
     assert event.prompt_version == "signal_extraction_v1"
@@ -98,6 +124,43 @@ def test_successful_chunk_call_records_usage_tokens_cost_latency_and_status() ->
     assert event.retry_count == 0
     assert event.status == "success"
     assert event.error_type is None
+
+
+def test_chunk_call_can_override_service_tier_to_standard() -> None:
+    client = OpenAIClient(
+        sdk_client=FakeSDK([_response({"candidates": []})]),
+        attempts=1,
+    )
+
+    client.parse_structured_output(
+        model="gpt-5.4",
+        system_prompt="Extract signals.",
+        input_payload={"chunk_id": "call_sanitized_chunk_001", "turns": []},
+        response_model=SegmentSignalExtractionResult,
+        context=_context(),
+        service_tier="standard",
+    )
+
+    assert client.sdk_client.completions.requests[0]["service_tier"] == "standard"
+
+
+def test_invalid_service_tier_is_rejected_before_openai_call() -> None:
+    client = OpenAIClient(
+        sdk_client=FakeSDK([_response({"candidates": []})]),
+        attempts=1,
+    )
+
+    with pytest.raises(ValueError, match="service_tier"):
+        client.parse_structured_output(
+            model="gpt-5.4",
+            system_prompt="Extract signals.",
+            input_payload={"chunk_id": "call_sanitized_chunk_001", "turns": []},
+            response_model=SegmentSignalExtractionResult,
+            context=_context(),
+            service_tier="auto",
+        )
+
+    assert client.sdk_client.completions.requests == []
 
 
 def test_failed_chunk_call_records_sanitized_error_metadata_without_transcript_text() -> None:
@@ -226,3 +289,58 @@ def test_multiple_chunks_create_multiple_usage_records() -> None:
         "call_sanitized_chunk_001",
         "call_sanitized_chunk_002",
     ]
+
+
+def test_consolidation_call_records_cross_segment_usage_context() -> None:
+    recorder = RecordingUsageRecorder()
+    client = OpenAIClient(
+        sdk_client=FakeSDK(
+            [
+                _consolidation_response(
+                    {
+                        "ranked_signals": [
+                            {
+                                "source_candidate_id": "candidate_001",
+                                "item_type": "driver",
+                                "rank": 1,
+                                "category": "Operational support",
+                                "advisor_quote": "I need stronger support.",
+                                "timestamp": "00:01:00",
+                                "evidence_strength": "explicit",
+                                "rationale": "The advisor states a support need.",
+                            }
+                        ]
+                    },
+                    prompt_tokens=80,
+                    completion_tokens=10,
+                )
+            ]
+        ),
+        usage_recorder=recorder,
+        attempts=1,
+    )
+    candidates = [
+        CandidateSignal(
+            transcript_id="call_sanitized",
+            item_type="driver",
+            category="Operational support",
+            advisor_quote="I need stronger support.",
+            timestamp="00:01:00",
+            evidence_strength="explicit",
+            rationale="The advisor states a support need.",
+            source_chunk_id="call_sanitized_chunk_001",
+        )
+    ]
+
+    ranked = ConsolidationRankingAgent(
+        llm_client=client,
+        pipeline_run_id="run_sanitized",
+    ).run(candidates)
+
+    assert len(ranked) == 1
+    event = recorder.events[0]
+    assert event.agent_name == "ConsolidationRankingAgent"
+    assert event.pipeline_step == "consolidation_ranking"
+    assert event.prompt_version == "consolidation_ranking_v1"
+    assert event.model == "gpt-5.5"
+    assert event.chunk_id is None

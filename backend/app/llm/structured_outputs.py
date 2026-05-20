@@ -26,3 +26,22 @@ class SegmentSignalExtractionResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     candidates: list[SegmentCandidateSignalOutput] = Field(default_factory=list)
+
+
+class RankedSignalOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_candidate_id: str = Field(min_length=1)
+    item_type: SignalType
+    rank: int = Field(ge=1)
+    category: str = Field(min_length=1)
+    advisor_quote: str = Field(min_length=1)
+    timestamp: str | None = None
+    evidence_strength: EvidenceStrength
+    rationale: str = Field(min_length=1)
+
+
+class ConsolidationRankingResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ranked_signals: list[RankedSignalOutput] = Field(default_factory=list)

@@ -1,6 +1,7 @@
 from app.pipeline.orchestrator import PipelineOrchestrator
+from app.pipeline.agents.consolidation_ranking_agent import ConsolidationRankingAgent
 from app.pipeline.agents.signal_extraction_agent import SignalExtractionAgent
-from app.pipeline.schemas import CandidateSignal, PreparedTranscript
+from app.pipeline.schemas import CandidateSignal, PreparedTranscript, RankedSignal
 
 
 def test_pipeline_orchestrator_returns_completed_status() -> None:
@@ -54,7 +55,21 @@ def test_pipeline_orchestrator_extracts_supported_advisor_signals(monkeypatch) -
             ),
         ]
 
+    def fake_consolidation_ranking_run(
+        self: ConsolidationRankingAgent, candidates: list[CandidateSignal]
+    ) -> list[RankedSignal]:
+        return [
+            RankedSignal(**candidates[0].model_dump(), rank=1),
+            RankedSignal(**candidates[1].model_dump(), rank=1),
+            RankedSignal(**candidates[2].model_dump(), rank=2),
+        ]
+
     monkeypatch.setattr(SignalExtractionAgent, "run", fake_signal_extraction_run)
+    monkeypatch.setattr(
+        ConsolidationRankingAgent,
+        "run",
+        fake_consolidation_ranking_run,
+    )
     transcript = """
 00:01:00 Optimize Rep: Our platform has a modern client portal.
 00:01:15 Advisor: The technology at my current firm is slow and clients complain about the portal.
