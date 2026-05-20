@@ -57,13 +57,54 @@ Agent 3 currently uses:
 - `ConsolidationRankingResult` and `RankedSignalOutput` in `backend/app/llm/structured_outputs.py` as strict structured output models.
 - Deterministic candidate IDs in the LLM payload, shaped as `candidate_001`, `candidate_002`, and so on.
 - `LLMCallContext.chunk_id = None`, because consolidation is cross-segment rather than chunk-level.
-- fallback only for retryable transient failures such as 429, timeout, connection error, or 5xx; local validation errors, malformed structured outputs, auth/config errors, permission errors, not-found errors, and bad requests should fail fast.
+- fallback only for retryable transient failures such as 429, timeout, connection error, or 5xx after centralized retries are exhausted; local validation errors, malformed structured outputs, auth/config errors, permission errors, not-found errors, and bad requests should fail fast.
 - `backend/scripts/run_consolidation_ranking_for_candidates.py` for local manual smoke tests against Agent 2 candidate JSON such as `backend/signal_candidates.local.json`.
 - `--dry-run-input` on the smoke script to print the exact JSON payload that would be sent to the LLM without calling OpenAI.
 
 The Agent 3 implementation includes post-LLM guardrails: unknown `source_candidate_id` values fail, duplicate selected source candidate IDs fail, item type mismatches between selected output and source candidate fail, ranks must be contiguous within each item type starting at `1`, and output is capped at three per item type. Final `RankedSignal` objects copy `transcript_id` and `source_chunk_id` from the selected known source candidate, not from model-invented fields.
 
-The evidence validation and final formatting agents still exist as scaffolding or lightweight placeholder behavior. Treat them as pipeline shape, not final production intelligence, until their prompts, schemas, LLM calls, persistence, validation logic, and tests are completed.
+The fourth agent, `EvidenceValidationAgent`, is implemented as an LLM-backed transcript-level critic in `backend/app/pipeline/agents/evidence_validation_agent.py`. It takes Agent 3 `RankedSignal` objects plus the prepared transcript, builds compact evidence contexts from each ranked signal's `source_chunk_id`, validates every ranked signal through the Responses API, and returns final kept `ValidatedSignal` objects with contiguous ranks after rejected items are dropped.
+
+Agent 4 currently uses:
+
+- `EVIDENCE_VALIDATION_MODEL = settings.openai_model`, which defaults to `OPENAI_MODEL=gpt-5.5`.
+- `EVIDENCE_VALIDATION_FALLBACK_MODEL = settings.openai_model_mid`, which defaults to `OPENAI_MODEL_MID=gpt-5.4`.
+- `EVIDENCE_VALIDATION_SERVICE_TIER = DEFAULT_SERVICE_TIER`, which resolves to repo-facing `flex`.
+- `EVIDENCE_VALIDATION_ENDPOINT = "responses"`.
+- `EVIDENCE_VALIDATION_MAX_OUTPUT_TOKENS = 6000`.
+- `backend/app/prompts/evidence_validation_v1.md` as the prompt.
+- `EvidenceValidationResult`, `ValidatedSignalOutput`, and `RejectedSignalOutput` in `backend/app/llm/structured_outputs.py` as strict structured output models.
+- Deterministic ranked signal IDs in the LLM payload, shaped as `ranked_signal_001`, `ranked_signal_002`, and so on.
+- `LLMCallContext.chunk_id = None`, because validation is cross-segment after ranking.
+- fallback only for retryable transient failures after bounded centralized retries; do not fallback for bad requests, schema failures, Pydantic validation errors, auth/config errors, permission errors, not-found errors, or malformed structured output.
+- `PipelineOrchestrator(record_usage=False)` passes the same no-usage `OpenAIClient` to Agents 2, 3, 4, and 5 so local smoke runs do not require Postgres.
+- `backend/scripts/run_evidence_validation_for_ranked.py` for local manual smoke tests against Agent 3 ranking artifacts or raw `RankedSignal[]` JSON.
+- `--dry-run-input` on the smoke script to print the exact Agent 4 JSON payload without calling OpenAI.
+
+Agent 4 builds evidence context deterministically:
+
+- Prefer the ranked signal's `source_chunk_id`.
+- If the normalized quote appears in an advisor turn, include that turn plus nearby turns.
+- If no exact normalized advisor-quote match is found, include the full source chunk so the critic can decide whether a near-verbatim quote rewrite is valid.
+
+The Agent 4 implementation includes post-LLM guardrails: unknown `source_ranked_signal_id` values fail, duplicate source ranked signal IDs fail, every ranked signal must appear exactly once across `validated_signals` or `rejected_signals`, item type mismatches between selected output and source ranked signal fail, output is capped at three per type, and kept outputs are renumbered contiguously within each item type. Final `ValidatedSignal` objects copy `transcript_id` and `source_chunk_id` from the selected known source ranked signal, not from model-invented fields.
+
+The fifth agent, `FinalFormattingAgent`, is implemented as an LLM-backed transcript-level formatter in `backend/app/pipeline/agents/final_formatting_agent.py`. It consumes only Agent 4 `ValidatedSignal` objects, formats them into public `FinalSignal` objects, and must not invent, revalidate, merge, split, or add signals.
+
+Agent 5 currently uses:
+
+- `FINAL_FORMATTING_MODEL = settings.openai_model_mid`, which defaults to `OPENAI_MODEL_MID=gpt-5.4`.
+- `FINAL_FORMATTING_ENDPOINT = "responses"`.
+- `FINAL_FORMATTING_SERVICE_TIER = DEFAULT_SERVICE_TIER`, which resolves to repo-facing `flex`.
+- `FINAL_FORMATTING_MAX_OUTPUT_TOKENS = 3000`.
+- `backend/app/prompts/final_formatting_v1.md` as the prompt.
+- `FinalFormattingResult` and `FinalSignalOutput` in `backend/app/llm/structured_outputs.py` as strict structured output models.
+- Deterministic validated signal IDs in the LLM payload, shaped as `validated_signal_001`, `validated_signal_002`, and so on.
+- `LLMCallContext.chunk_id = None`, because final formatting is transcript-level.
+- `backend/scripts/run_final_formatting_for_validated.py` for local manual smoke tests against Agent 4 `critic-agent` artifacts or raw `ValidatedSignal[]` JSON.
+- `--dry-run-input` on the smoke script to print the exact Agent 5 JSON payload without calling OpenAI.
+
+The Agent 5 implementation includes post-LLM guardrails: unknown `source_validated_signal_id` values fail, duplicate source validated signal IDs fail, item type mismatches between selected output and source validated signal fail, output is capped at three per type, and final outputs are renumbered contiguously within each item type. Final `FinalSignal` objects copy `transcript_id` from the selected known source validated signal, not from model-invented identifiers, and exclude internal fields such as `validation_notes` and `source_chunk_id`.
 
 The orchestrator also writes human-review JSON artifacts after each stage through `backend/app/pipeline/agent_output_writer.py`. This is intentionally orchestrator-owned, not agent-owned, so bounded agent contracts remain pure and in-memory handoffs stay unchanged.
 
@@ -109,7 +150,7 @@ Raw Zoom transcript
   -> Segment-Level Signal Extraction Agent
   -> Cross-Segment Consolidation + Ranking Agent
   -> Evidence Validation / Critic Agent
-  -> Final JSON/CSV formatting
+  -> Final Formatting Agent
   -> Local human-review JSON artifacts
   -> PostgreSQL persistence and review UI
 ```
@@ -271,6 +312,27 @@ Do not copy real transcript text or real extracted call output into tests.
 
 Treat validation as the precision gate.
 
+`EvidenceValidationAgent.run(ranked_candidates: list[RankedSignal], prepared_transcript: PreparedTranscript | None = None) -> list[ValidatedSignal]` must keep this contract. It should:
+
+- Return `[]` without an LLM call when there are no ranked candidates.
+- Require a prepared transcript when ranked candidates exist.
+- Require all ranked candidates to belong to a single transcript and match the prepared transcript ID.
+- Make one primary OpenAI structured-output call for the full transcript ranked-signal set through `OpenAIClient` using `client.responses.parse(...)`.
+- Retry with the fallback model only when the primary call fails with a retryable transient OpenAI/API error after exhausting bounded centralized retries.
+- Send compact ranked signal JSON with deterministic `ranked_signal_id` values plus compact evidence contexts from the matching source chunks.
+- Use `chunk_id=None` in `LLMCallContext`.
+- Populate final `ValidatedSignal.transcript_id` and `ValidatedSignal.source_chunk_id` from the selected source ranked signal in code.
+- Call only `backend/app/llm/openai_client.py`, never the OpenAI SDK directly from the agent.
+
+Default model strategy:
+
+- Agent 4 defaults to `OPENAI_MODEL` / `settings.openai_model`, currently `gpt-5.5`.
+- Keep the selected model line obvious near the top of `evidence_validation_agent.py`: `EVIDENCE_VALIDATION_MODEL = settings.openai_model`.
+- Agent 4 fallback defaults to `OPENAI_MODEL_MID` / `settings.openai_model_mid`, currently `gpt-5.4`.
+- Keep the fallback model line obvious near the top of `evidence_validation_agent.py`: `EVIDENCE_VALIDATION_FALLBACK_MODEL = settings.openai_model_mid`.
+- Agent 4 defaults to repo-facing `EVIDENCE_VALIDATION_SERVICE_TIER = DEFAULT_SERVICE_TIER`, `EVIDENCE_VALIDATION_ENDPOINT = "responses"`, and `EVIDENCE_VALIDATION_MAX_OUTPUT_TOKENS = 6000`.
+- The constructor can override the primary model, fallback model, service tier, endpoint, and max output token budget for tests or controlled experiments.
+
 For each proposed item, verify:
 
 - The quote appears verbatim or near-verbatim in the prepared transcript.
@@ -283,9 +345,45 @@ The validator may keep, rewrite, downgrade, or reject. Unsupported items must be
 
 After validation drops any ranked items, remaining `ValidatedSignal` outputs must be renumbered contiguously within each `item_type` before final formatting so public outputs never contain rank gaps such as `1, 3`.
 
+Use structured outputs and prompt files in `backend/app/prompts/`, especially `evidence_validation_v1.md`. The structured output model is `EvidenceValidationResult` with `validated_signals` and `rejected_signals`; every ranked signal must appear exactly once across those two arrays. Extra fields are forbidden and enum values must validate.
+
+When changing Agent 4, add or update sanitized mocked-OpenAI tests in:
+
+- `backend/tests/test_evidence_validation_agent.py`
+- `backend/tests/test_llm_usage_tracking.py`
+
+Do not copy real transcript text or real extracted call output into tests.
+
 ## Final Formatting
 
-Prefer deterministic formatting after validation has produced clean structured objects. Keep internal validation notes, rejected candidates, audit metadata, and usage events persisted for review, but do not include them in the final business export unless the route explicitly requests review/audit detail.
+`FinalFormattingAgent.run(validated_candidates: list[ValidatedSignal]) -> list[FinalSignal]` must keep this contract. It should:
+
+- Return `[]` without an LLM call when there are no validated signals.
+- Require all validated signals to belong to a single transcript.
+- Make one OpenAI structured-output call for the full transcript validated-signal set through `OpenAIClient` using `client.responses.parse(...)`.
+- Send compact validated signal JSON with deterministic `validated_signal_id` values.
+- Exclude `validation_notes`, `source_chunk_id`, rejected candidates, audit metadata, and usage events from the LLM input and public output.
+- Use `chunk_id=None` in `LLMCallContext`.
+- Populate final `FinalSignal.transcript_id` from the selected source validated signal in code.
+- Call only `backend/app/llm/openai_client.py`, never the OpenAI SDK directly from the agent.
+
+Default model strategy:
+
+- Agent 5 defaults to `OPENAI_MODEL_MID` / `settings.openai_model_mid`, currently `gpt-5.4`.
+- Keep the selected model line obvious near the top of `final_formatting_agent.py`: `FINAL_FORMATTING_MODEL = settings.openai_model_mid`.
+- Agent 5 defaults to repo-facing `FINAL_FORMATTING_SERVICE_TIER = DEFAULT_SERVICE_TIER`, `FINAL_FORMATTING_ENDPOINT = "responses"`, and `FINAL_FORMATTING_MAX_OUTPUT_TOKENS = 3000`.
+- The constructor can override the model, service tier, endpoint, and max output token budget for tests or controlled experiments.
+
+Agent 5 must not revalidate evidence. It may only perform public-schema formatting and minor cleanup while preserving advisor quotes verbatim. It must not add a signal unless it selects one input `validated_signal_id`.
+
+Use structured outputs and prompt files in `backend/app/prompts/`, especially `final_formatting_v1.md`. The structured output model is `FinalFormattingResult` with `final_signals`; each output includes `source_validated_signal_id`, `item_type`, `rank`, `category`, `advisor_quote`, `timestamp`, `evidence_strength`, and `rationale`. Extra fields are forbidden and enum values must validate.
+
+When changing Agent 5, add or update sanitized mocked-OpenAI tests in:
+
+- `backend/tests/test_final_formatting_agent.py`
+- `backend/tests/test_llm_usage_tracking.py`
+
+Do not copy real transcript text or real extracted call output into tests.
 
 ## Observability and Cost
 
@@ -293,7 +391,7 @@ Centralize all OpenAI calls through `backend/app/llm/openai_client.py` so model 
 
 All centralized OpenAI calls must include a repo-facing `service_tier`. The default is `flex` via `DEFAULT_SERVICE_TIER`; future LLM-backed agents should pass that default through unless a specific call is intentionally configured with repo-facing `service_tier="standard"`. `OpenAIClient` maps repo-facing `"standard"` to OpenAI API `"default"`.
 
-`OpenAIClient` supports endpoint selection through `endpoint="chat_completions"` and `endpoint="responses"`. Agent 2 currently uses the default Chat Completions structured parsing path with `messages`. Agent 3 uses the Responses structured parsing path with `instructions`, JSON-string `input`, and `text_format`.
+`OpenAIClient` supports endpoint selection through `endpoint="chat_completions"` and `endpoint="responses"`. Agent 2 currently uses the default Chat Completions structured parsing path with `messages`. Agents 3, 4, and 5 use the Responses structured parsing path with `instructions`, JSON-string `input`, and `text_format`.
 
 Persist an LLM usage event per model call in `llm_usage_events`. The current implementation includes:
 
@@ -319,25 +417,28 @@ Current pricing config lives in `backend/app/core/config.py` as `openai_model_pr
 
 The full pipeline can be run locally with `backend/scripts/run_pipeline_for_transcript.py`. It writes per-agent human-review artifacts through the orchestrator. It disables database usage recording by default so local artifact review can run without Postgres; pass `--record-usage` only when Postgres is available and migrations have run.
 
-Agent 2 candidate outputs can also be written locally with `backend/scripts/run_signal_extraction_for_prepared.py --output <path>`. Agent 3 ranked outputs can be written locally with `backend/scripts/run_consolidation_ranking_for_candidates.py --output <path>`. These per-agent smoke scripts also disable database usage recording by default and accept `--record-usage`.
+Agent 2 candidate outputs can also be written locally with `backend/scripts/run_signal_extraction_for_prepared.py --output <path>`. Agent 3 ranked outputs can be written locally with `backend/scripts/run_consolidation_ranking_for_candidates.py --output <path>`. Agent 4 validated outputs can be written locally with `backend/scripts/run_evidence_validation_for_ranked.py --output <path>` or, when run against `data/outputs/agents-outputs/ranking-agent/*.json`, through the standard `critic-agent` artifact writer. Agent 5 final outputs can be written locally with `backend/scripts/run_final_formatting_for_validated.py --output <path>` or, when run against `data/outputs/agents-outputs/critic-agent/*.json`, through the standard `final-formatter` artifact writer. These per-agent smoke scripts disable database usage recording by default and accept `--record-usage`.
 
 If a local run fails with a timeout on `localhost:5432` after an OpenAI call, the OpenAI call likely succeeded and the usage recorder could not connect to Postgres. This is not caused by `service_tier="flex"`; flex can affect OpenAI latency, not database connectivity.
 
 `OpenAIClient` retry behavior is intentionally bounded:
 
 - Retry only transient OpenAI/API failures such as rate limits, timeouts, connection errors, and 5xx errors.
+- Wait before retrying retryable failures. The default initial delay is 60 seconds and doubles after each failed retryable attempt, so the default three attempts wait 60 seconds and then 120 seconds before the call fails or an agent-level fallback is considered.
 - Do not retry non-retryable configuration/request errors such as `AuthenticationError`, `BadRequestError`, `NotFoundError`, or `PermissionDeniedError`.
 - Do not retry or fallback for local validation errors or malformed structured output; those usually indicate schema, prompt, or guardrail issues that should be fixed directly.
 - Do not let a usage-recorder failure cause duplicate successful OpenAI calls.
 - Record sanitized failed usage events when usage recording is enabled and the database is reachable.
 - Emit sanitized warning logs for failed OpenAI calls with request ID when available, status code, model, endpoint, repo-facing service tier, API service tier, agent name, pipeline step, transcript ID, chunk ID, attempt count, and retryability. Never log prompts, raw transcript text, candidate payloads, model output text, or full exception messages that may contain confidential content.
 
-Agent 3 fallback behavior is intentionally narrow:
+Agent 3 and Agent 4 fallback behavior is intentionally narrow:
 
-- Use the fallback model only after the primary consolidation/ranking model fails with a retryable transient error such as repeated `openai.InternalServerError` / 500 responses.
+- Use the fallback model only after the primary model fails with a retryable transient error such as repeated `openai.InternalServerError` / 500 responses or `RateLimitError` / 429 responses after bounded retries and backoff.
 - Preserve the same prompt version, payload, structured response model, endpoint, service tier, max output token budget, and `LLMCallContext` for fallback calls.
 - Expect usage tracking to record the attempted model for each call, so a primary failure followed by a fallback success may produce separate usage events when usage recording is enabled.
 - Do not use fallback for `BadRequestError` or Pydantic `ValidationError`; these are configuration/schema/output-budget problems to fix directly. One observed Responses failure was a 400 caused by sending literal `service_tier="standard"`; the fix was mapping repo `standard` to API `default`. Another observed failure was truncated Agent 3 structured JSON with a 2000-token budget; the fix was `CONSOLIDATION_RANKING_MAX_OUTPUT_TOKENS = 6000`.
+
+Agent 5 currently has no fallback model. It relies on the centralized bounded retry behavior in `OpenAIClient`; schema or guardrail failures should fail fast and be fixed directly.
 
 ## Local Setup and Smoke Testing
 
@@ -433,6 +534,50 @@ To test Agent 3 with usage persistence:
 cd D:\development\optimize-financial\backend
 python -m alembic upgrade head
 python scripts\run_consolidation_ranking_for_candidates.py signal_candidates.local.json --output ranked_signals.local.json --record-usage
+```
+
+To inspect the exact Agent 4 LLM input payload without calling OpenAI:
+
+```powershell
+cd D:\development\optimize-financial\backend
+python scripts\run_evidence_validation_for_ranked.py ..\data\outputs\agents-outputs\ranking-agent\example.json --dry-run-input
+```
+
+To test Agent 4 without database usage persistence:
+
+```powershell
+cd D:\development\optimize-financial\backend
+python scripts\run_evidence_validation_for_ranked.py ..\data\outputs\agents-outputs\ranking-agent\example.json --output validated_signals.local.json
+```
+
+To test Agent 4 with usage persistence:
+
+```powershell
+cd D:\development\optimize-financial\backend
+python -m alembic upgrade head
+python scripts\run_evidence_validation_for_ranked.py ..\data\outputs\agents-outputs\ranking-agent\example.json --output validated_signals.local.json --record-usage
+```
+
+To inspect the exact Agent 5 LLM input payload without calling OpenAI:
+
+```powershell
+cd D:\development\optimize-financial\backend
+python scripts\run_final_formatting_for_validated.py ..\data\outputs\agents-outputs\critic-agent\example.json --dry-run-input
+```
+
+To test Agent 5 without database usage persistence:
+
+```powershell
+cd D:\development\optimize-financial\backend
+python scripts\run_final_formatting_for_validated.py ..\data\outputs\agents-outputs\critic-agent\example.json --output final_signals.local.json
+```
+
+To test Agent 5 with usage persistence:
+
+```powershell
+cd D:\development\optimize-financial\backend
+python -m alembic upgrade head
+python scripts\run_final_formatting_for_validated.py ..\data\outputs\agents-outputs\critic-agent\example.json --output final_signals.local.json --record-usage
 ```
 
 If `--record-usage` reaches OpenAI and fails with `openai.AuthenticationError` / 401, the DB path is working and the configured `OPENAI_API_KEY` is invalid, revoked, or malformed. Keep `OPENAI_API_KEY` on exactly one physical line in `.env`; never paste or print the secret in logs or committed docs.
