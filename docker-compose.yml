@@ -22,6 +22,9 @@ services:
       dockerfile: infra/backend.Dockerfile
     env_file:
       - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://advisor:advisor@postgres:5432/advisor_signal_extraction
+      REDIS_URL: redis://redis:6379/0
     depends_on:
       - postgres
       - redis
@@ -38,6 +41,9 @@ services:
     command: celery -A backend.app.workers.celery_app.celery_app worker --loglevel=INFO
     env_file:
       - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://advisor:advisor@postgres:5432/advisor_signal_extraction
+      REDIS_URL: redis://redis:6379/0
     depends_on:
       - postgres
       - redis
@@ -59,4 +65,3 @@ services:
 
 volumes:
   postgres_data:
-
