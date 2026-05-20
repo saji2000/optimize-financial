@@ -28,6 +28,7 @@ Start Time (Eastern): 2025-12-03T12:59:01-05:00
     assert turns[2].speaker == "ADVISOR_1"
     assert turns[2].speaker_role == "advisor"
     assert turns[1].text == "I have a question about the platform."
+    assert "speaker_role_confidence" not in turns[0].model_dump(mode="json")
 
 
 def test_preparation_recognizes_optimize_rep_label_with_space() -> None:

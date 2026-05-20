@@ -68,7 +68,6 @@ class TranscriptPreparationAgent:
                     end_timestamp=None,
                     speaker="Unknown",
                     speaker_role="unknown",
-                    speaker_role_confidence="high",
                     text=raw_text.strip(),
                 )
             ]
@@ -125,7 +124,7 @@ class TranscriptPreparationAgent:
                 continue
             seen.add(dedupe_key)
 
-            speaker_role, confidence = self._infer_role(speaker)
+            speaker_role = self._infer_role(speaker)
             turns.append(
                 TranscriptTurn(
                     sequence=len(turns) + 1,
@@ -133,7 +132,6 @@ class TranscriptPreparationAgent:
                     end_timestamp=end_timestamp,
                     speaker=speaker,
                     speaker_role=speaker_role,
-                    speaker_role_confidence=confidence,
                     text=text,
                 )
             )
@@ -161,7 +159,7 @@ class TranscriptPreparationAgent:
                 continue
             seen.add(dedupe_key)
 
-            speaker_role, confidence = self._infer_role(speaker)
+            speaker_role = self._infer_role(speaker)
             turns.append(
                 TranscriptTurn(
                     sequence=len(turns) + 1,
@@ -169,7 +167,6 @@ class TranscriptPreparationAgent:
                     end_timestamp=None,
                     speaker=speaker,
                     speaker_role=speaker_role,
-                    speaker_role_confidence=confidence,
                     text=text,
                 )
             )
@@ -278,13 +275,13 @@ class TranscriptPreparationAgent:
             return f"{normalized}.{milliseconds}"
         return normalized
 
-    def _infer_role(self, speaker: str) -> tuple[str, str]:
+    def _infer_role(self, speaker: str) -> str:
         normalized = re.sub(r"[^a-z0-9]+", "_", speaker.strip().lower()).strip("_")
         if normalized.startswith("advisor"):
-            return "advisor", "high"
+            return "advisor"
 
         rep_labels = {"optimize_rep", "rep", "corporate_development"}
         if normalized in rep_labels or normalized.startswith("optimize_rep"):
-            return "optimize_rep", "high"
+            return "optimize_rep"
 
-        return "unknown", "low"
+        return "unknown"
