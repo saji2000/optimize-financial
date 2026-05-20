@@ -11,11 +11,19 @@ def main() -> None:
     parser.add_argument("transcript_path", type=Path)
     parser.add_argument("--transcript-id", default=None)
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--record-usage",
+        action="store_true",
+        help="Persist LLM usage metadata to Postgres. Requires the database to be running.",
+    )
     args = parser.parse_args()
 
     raw_text = load_transcript(args.transcript_path)
     transcript_id = args.transcript_id or args.transcript_path.stem
-    result = PipelineOrchestrator().run(transcript_id=transcript_id, raw_text=raw_text)
+    result = PipelineOrchestrator(record_usage=args.record_usage).run(
+        transcript_id=transcript_id,
+        raw_text=raw_text,
+    )
     output = json.dumps(result, indent=2)
 
     if args.output:

@@ -1,12 +1,14 @@
+import logging
 from typing import Any
 
 from app.core.config import settings
 from app.domain.enums import SignalType
 from app.llm.openai_client import (
-    DEFAULT_SERVICE_TIER,
     LLMCallContext,
+    OpenAIEndpoint,
     OpenAIClient,
     ServiceTier,
+    is_retryable_llm_error,
 )
 from app.llm.prompt_loader import load_prompt
 from app.llm.structured_outputs import ConsolidationRankingResult, RankedSignalOutput
@@ -15,10 +17,15 @@ from app.services.llm_usage_service import LLMUsageService
 
 
 CONSOLIDATION_RANKING_MODEL = settings.openai_model
+CONSOLIDATION_RANKING_FALLBACK_MODEL = settings.openai_model_mid
+CONSOLIDATION_RANKING_SERVICE_TIER: ServiceTier = "standard"
+CONSOLIDATION_RANKING_ENDPOINT: OpenAIEndpoint = "responses"
+CONSOLIDATION_RANKING_MAX_OUTPUT_TOKENS = 6000
 CONSOLIDATION_RANKING_PROMPT = "consolidation_ranking_v1.md"
 CONSOLIDATION_RANKING_PROMPT_VERSION = "consolidation_ranking_v1"
 CONSOLIDATION_RANKING_AGENT_NAME = "ConsolidationRankingAgent"
 CONSOLIDATION_RANKING_PIPELINE_STEP = "consolidation_ranking"
+LOGGER = logging.getLogger(__name__)
 
 
 class ConsolidationRankingAgent:
@@ -27,12 +34,18 @@ class ConsolidationRankingAgent:
         llm_client: OpenAIClient | None = None,
         pipeline_run_id: str | None = None,
         model: str = CONSOLIDATION_RANKING_MODEL,
-        service_tier: ServiceTier = DEFAULT_SERVICE_TIER,
+        fallback_model: str | None = CONSOLIDATION_RANKING_FALLBACK_MODEL,
+        service_tier: ServiceTier = CONSOLIDATION_RANKING_SERVICE_TIER,
+        endpoint: OpenAIEndpoint = CONSOLIDATION_RANKING_ENDPOINT,
+        max_output_tokens: int = CONSOLIDATION_RANKING_MAX_OUTPUT_TOKENS,
     ) -> None:
         self.llm_client = llm_client or OpenAIClient(usage_recorder=LLMUsageService())
         self.pipeline_run_id = pipeline_run_id
         self.model = model
+        self.fallback_model = fallback_model
         self.service_tier = service_tier
+        self.endpoint = endpoint
+        self.max_output_tokens = max_output_tokens
         self.system_prompt = load_prompt(CONSOLIDATION_RANKING_PROMPT)
 
     def run(self, candidates: list[CandidateSignal]) -> list[RankedSignal]:
@@ -46,16 +59,61 @@ class ConsolidationRankingAgent:
             for item, candidate in zip(candidate_payloads, candidates, strict=True)
         }
 
+        input_payload = {
+            "transcript_id": transcript_id,
+            "candidate_count": len(candidate_payloads),
+            "candidates": candidate_payloads,
+        }
+        raw_result = self._parse_ranked_result(
+            input_payload=input_payload,
+            transcript_id=transcript_id,
+        )
+        result = ConsolidationRankingResult.model_validate(raw_result)
+        return self._ranked_signals(result.ranked_signals, candidates_by_id)
+
+    def _parse_ranked_result(
+        self,
+        *,
+        input_payload: dict[str, Any],
+        transcript_id: str,
+    ) -> ConsolidationRankingResult:
+        try:
+            return self._parse_ranked_result_with_model(
+                model=self.model,
+                input_payload=input_payload,
+                transcript_id=transcript_id,
+            )
+        except Exception as exc:
+            if not self._should_try_fallback(exc):
+                raise
+            LOGGER.warning(
+                "%s primary model failed with %s for transcript_id=%r; "
+                "retrying with fallback model",
+                CONSOLIDATION_RANKING_AGENT_NAME,
+                exc.__class__.__name__,
+                transcript_id,
+            )
+            return self._parse_ranked_result_with_model(
+                model=self.fallback_model,
+                input_payload=input_payload,
+                transcript_id=transcript_id,
+            )
+
+    def _parse_ranked_result_with_model(
+        self,
+        *,
+        model: str,
+        input_payload: dict[str, Any],
+        transcript_id: str,
+    ) -> ConsolidationRankingResult:
         raw_result = self.llm_client.parse_structured_output(
-            model=self.model,
+            model=model,
             system_prompt=self.system_prompt,
-            input_payload={
-                "transcript_id": transcript_id,
-                "candidate_count": len(candidate_payloads),
-                "candidates": candidate_payloads,
-            },
+            input_payload=input_payload,
             response_model=ConsolidationRankingResult,
+            max_output_tokens=self.max_output_tokens,
             service_tier=self.service_tier,
+            endpoint=self.endpoint,
             context=LLMCallContext(
                 pipeline_run_id=self.pipeline_run_id,
                 transcript_id=transcript_id,
@@ -65,8 +123,14 @@ class ConsolidationRankingAgent:
                 prompt_version=CONSOLIDATION_RANKING_PROMPT_VERSION,
             ),
         )
-        result = ConsolidationRankingResult.model_validate(raw_result)
-        return self._ranked_signals(result.ranked_signals, candidates_by_id)
+        return ConsolidationRankingResult.model_validate(raw_result)
+
+    def _should_try_fallback(self, error: Exception) -> bool:
+        return (
+            self.fallback_model is not None
+            and self.fallback_model != self.model
+            and is_retryable_llm_error(error)
+        )
 
     def _transcript_id(self, candidates: list[CandidateSignal]) -> str:
         transcript_ids = {candidate.transcript_id for candidate in candidates}

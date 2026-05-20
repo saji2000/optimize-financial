@@ -85,6 +85,9 @@ PipelineOrchestrator
 [5] Final JSON/CSV Formatting Agent or deterministic formatter
         |
         v
+Local human-review JSON artifacts
+        |
+        v
 PostgreSQL persisted candidates, final signals, audit events
         |
         v
@@ -116,12 +119,49 @@ Important backend concerns:
 - Use FastAPI, Pydantic, SQLAlchemy, Alembic, Celery/Redis, PostgreSQL, and the OpenAI Python SDK.
 - Keep prompt files in `backend/app/prompts/` with explicit version suffixes such as `_v1.md`.
 - Keep model IDs, prompt versions, temperature, max output tokens, and schema versions in configuration or persisted pipeline metadata.
-- Every OpenAI-backed agent call must use `service_tier: "flex"` by default to reduce cost. Only set `service_tier: "standard"` explicitly on an individual agent call when that call needs standard latency.
+- Every OpenAI-backed agent call should use repo-facing `service_tier: "flex"` by default to reduce cost. Only set repo-facing `service_tier: "standard"` explicitly on an individual agent call when that call needs standard latency. `backend/app/llm/openai_client.py` maps repo-facing `"standard"` to the OpenAI API value `"default"` because the API currently accepts `auto`, `default`, `flex`, and `priority`, not literal `standard`.
 - Persist rejected candidates and validation notes for auditability and self-assessment.
 - Log token usage, latency, model name, prompt version, retry count, and failure reason per LLM call.
 - Add application error monitoring, preferably Sentry or a Sentry-compatible service, for backend API errors, worker failures, unhandled exceptions, and frontend runtime errors.
 - Persist LLM usage records for every model call so cost and token usage can be audited and visualized later.
 - Never log full confidential transcripts in normal application logs.
+
+## Human-Review Agent Output Artifacts
+
+The orchestrator writes local, latest-only JSON artifacts after each pipeline stage so a human reviewer can inspect what each bounded agent produced without changing the in-memory handoff or public API behavior.
+
+Implementation details:
+
+- The writer is `backend/app/pipeline/agent_output_writer.py`.
+- `PipelineOrchestrator` owns artifact writing; individual agents must keep pure return-value contracts and should not write their own review artifacts.
+- The default output base path is resolved from the repo root, not process cwd: `data/outputs/agents-outputs`.
+- Files are overwritten for the same transcript and agent; there is no timestamped artifact history.
+- `transcript_id` is sanitized for filenames by replacing characters outside `[A-Za-z0-9._-]` with `_`.
+- Artifact writes are best-effort. Catch serialization and filesystem errors, log a warning without transcript text or artifact contents, and continue the pipeline.
+- `data/outputs/` is gitignored because these artifacts may contain confidential transcript-derived content.
+
+Current artifact paths:
+
+- `data/outputs/agents-outputs/transcript-preparation/{safe_transcript_id}.json`
+- `data/outputs/agents-outputs/signal-extraction/{safe_transcript_id}.json`
+- `data/outputs/agents-outputs/ranking-agent/{safe_transcript_id}.json`
+- `data/outputs/agents-outputs/critic-agent/{safe_transcript_id}.json`
+- `data/outputs/agents-outputs/final-formatter/{safe_transcript_id}.json`
+
+Each artifact uses this envelope:
+
+```json
+{
+  "transcript_id": "call_001",
+  "agent_name": "SignalExtractionAgent",
+  "pipeline_step": "signal_extraction",
+  "created_at": "2026-05-20T12:34:56Z",
+  "output_schema": "CandidateSignal[]",
+  "output": []
+}
+```
+
+Serialize Pydantic outputs with `model_dump(mode="json")`. Lists serialize as JSON arrays, and empty outputs still write `"output": []`.
 
 ## Frontend Responsibilities
 
@@ -197,13 +237,19 @@ Purpose: merge candidates across chunks and select the strongest supported signa
 Current implementation:
 
 - Implemented in `backend/app/pipeline/agents/consolidation_ranking_agent.py`.
-- Uses one OpenAI structured-output call per transcript candidate set.
+- Uses one primary OpenAI structured-output call per transcript candidate set through the Responses API (`client.responses.parse(...)`) via the centralized `OpenAIClient`.
+- If the primary model exhausts retries on a transient OpenAI failure such as 429, timeout, connection error, or 5xx, retries once through the configured fallback model before failing the step.
 - Defaults to `settings.openai_model`, currently `OPENAI_MODEL=gpt-5.5`, through `CONSOLIDATION_RANKING_MODEL`.
+- Uses `settings.openai_model_mid`, currently `OPENAI_MODEL_MID=gpt-5.4`, through `CONSOLIDATION_RANKING_FALLBACK_MODEL` as the transient-failure fallback.
+- Uses repo-facing `CONSOLIDATION_RANKING_SERVICE_TIER = "standard"`, which `OpenAIClient` sends to OpenAI as API `service_tier="default"`.
+- Uses `CONSOLIDATION_RANKING_ENDPOINT = "responses"` because repeated `gpt-5.5` failures were observed on the previous Chat Completions structured parsing path, while `gpt-5.5` completed successfully through Responses.
+- Uses `CONSOLIDATION_RANKING_MAX_OUTPUT_TOKENS = 6000`; the previous shared 2000-token default could truncate Agent 3's structured JSON on larger candidate sets.
 - Uses prompt `backend/app/prompts/consolidation_ranking_v1.md` and prompt version `consolidation_ranking_v1`.
 - Uses strict structured output models `RankedSignalOutput` and `ConsolidationRankingResult` in `backend/app/llm/structured_outputs.py`.
 - Uses `LLMCallContext` with agent name `ConsolidationRankingAgent`, pipeline step `consolidation_ranking`, and `chunk_id=None` because ranking is cross-segment.
 - Preserves `run(candidates: list[CandidateSignal]) -> list[RankedSignal]` so the orchestrator contract stays unchanged.
 - Returns `[]` without an LLM call when no candidates exist.
+- Fallback calls use the same prompt, payload, response schema, endpoint, service tier, max output token budget, and usage context as the primary call; usage tracking should show the attempted model for each call.
 
 Responsibilities:
 
@@ -264,7 +310,7 @@ For every proposed item, validate:
 - The item is decision-relevant.
 - The item is not merely polite interest, scheduling, clarification, or representative-led messaging.
 
-The validator may keep, rewrite, downgrade, or reject items. Unsupported items must be dropped from final output.
+The validator may keep, rewrite, downgrade, or reject items. Unsupported items must be dropped from final output. When validation drops a ranked item, remaining validated signals must be renumbered contiguously within each `item_type` before final formatting so public outputs never contain rank gaps such as `1, 3`.
 
 ### 5. Final Formatter
 
@@ -285,10 +331,10 @@ The assignment requires reusable production prompts and representative API snipp
 API snippets should show:
 
 - OpenAI model choice.
-- Input message structure.
+- Input structure for the selected endpoint. Agent 2 currently uses Chat Completions structured parsing with `messages`; Agent 3 uses Responses structured parsing with `instructions`, JSON-string `input`, and `text_format`.
 - Structured output JSON schema.
 - Temperature and relevant parameters.
-- `service_tier: "flex"` by default, with `service_tier: "standard"` only for explicitly latency-sensitive agent calls.
+- Repo-facing `service_tier: "flex"` by default, with repo-facing `service_tier: "standard"` only for explicitly latency-sensitive agent calls. Note that `OpenAIClient` maps repo `"standard"` to API `"default"`.
 - Retry/error behavior.
 - Token usage logging.
 - Estimated cost calculation.
@@ -298,10 +344,28 @@ Use structured outputs for extraction, ranking, validation, and final formatting
 
 Local smoke scripts:
 
+- Full pipeline from one transcript: `backend/scripts/run_pipeline_for_transcript.py`.
 - Agent 2 extraction: `backend/scripts/run_signal_extraction_for_prepared.py`.
 - Agent 3 consolidation/ranking: `backend/scripts/run_consolidation_ranking_for_candidates.py`.
 - Agent 3 supports `--dry-run-input` to print the exact JSON input payload without calling OpenAI.
-- Both Agent 2 and Agent 3 smoke scripts disable database usage recording by default; pass `--record-usage` only when Postgres is available and migrations have run.
+- Full pipeline, Agent 2, and Agent 3 smoke scripts disable database usage recording by default; pass `--record-usage` only when Postgres is available and migrations have run.
+
+To run the full pipeline for every local transcript and write human-review artifacts:
+
+```powershell
+cd D:\development\optimize-financial\backend
+Get-ChildItem ..\data\transcripts -File | ForEach-Object { python scripts\run_pipeline_for_transcript.py $_.FullName --transcript-id $_.BaseName }
+```
+
+To also persist LLM usage records:
+
+```powershell
+cd D:\development\optimize-financial
+docker compose up -d postgres
+cd D:\development\optimize-financial\backend
+python -m alembic upgrade head
+Get-ChildItem ..\data\transcripts -File | ForEach-Object { python scripts\run_pipeline_for_transcript.py $_.FullName --transcript-id $_.BaseName --record-usage }
+```
 
 ## Model Strategy
 
@@ -309,7 +373,7 @@ Use a tiered model strategy:
 
 - Transcript preparation: cheaper fast model, because this is mostly formatting, role inference, and chunking.
 - Chunk extraction: mid-tier or strong model, because it needs judgment but can run independently per chunk.
-- Consolidation/ranking: strong reasoning model, because it requires cross-segment prioritization and restraint.
+- Consolidation/ranking: strong reasoning model, because it requires cross-segment prioritization and restraint; keep a mid-tier fallback configured for transient primary-model/API failures so one unstable model does not block the whole local pipeline.
 - Evidence validation: strong reasoning model, because false positives are the highest-risk failure mode.
 - Final formatting: deterministic code or cheaper model with schema enforcement.
 
@@ -368,7 +432,7 @@ Track and discuss:
 - Number of LLM calls per transcript.
 - Which steps can use cheaper models versus stronger models.
 - Parallel chunk extraction to reduce latency.
-- Retry policy for transient LLM/API failures.
+- Retry policy for transient LLM/API failures, including which errors are eligible for model fallback and which errors should fail fast.
 - Structured error handling for invalid model output.
 - Logging and observability without leaking confidential transcript content.
 - Sentry or equivalent error monitoring across API, worker, and frontend surfaces.
@@ -406,14 +470,26 @@ Recommended implementation:
 
 - Add an `llm_usage_events` or similarly named PostgreSQL table.
 - Centralize OpenAI calls through `backend/app/llm/openai_client.py` so usage tracking cannot be bypassed.
+- `OpenAIClient` supports endpoint selection through `endpoint="chat_completions"` and `endpoint="responses"`. Agent 2 currently uses the default Chat Completions structured parsing path with `messages`. Agent 3 uses the Responses structured parsing path with `instructions`, JSON-string `input`, and `text_format`.
 - Keep model pricing in versioned configuration, not hardcoded inside agents.
-- Centralized OpenAI calls must send `service_tier: "flex"` unless the specific agent call passes `service_tier: "standard"`.
+- Centralized OpenAI calls must send repo-facing `service_tier: "flex"` unless the specific agent call passes repo-facing `service_tier: "standard"`. The centralized client maps repo-facing `"standard"` to OpenAI API `"default"`.
 - Store price version or pricing timestamp with each usage event so historical costs remain explainable after pricing changes.
 - Capture usage from OpenAI API responses whenever available.
 - On failed calls, persist the attempted model, agent, prompt version, latency, retry count, and sanitized error class.
+- On failed calls, emit sanitized logs with request ID when available, status code, model, endpoint, repo-facing service tier, API service tier, agent name, pipeline step, transcript ID, chunk ID, attempt count, and retryability. Never log prompts, raw transcript text, candidate payloads, model output text, or full exception messages that may contain confidential content.
+- Retry only transient OpenAI/API failures such as rate limits, timeouts, connection errors, and 5xx responses. Do not retry or fallback for local validation errors, malformed structured output, authentication/configuration errors, permission errors, not-found errors, or bad requests.
+- Agent 3 may make a second model call only after the primary consolidation/ranking model fails with a retryable transient error; this protects local transcript batches from repeated `openai.InternalServerError` responses without hiding schema or prompt bugs.
+- Do not use fallback for `BadRequestError` or Pydantic `ValidationError`; these are configuration/schema/output-budget problems to fix directly. One observed Responses failure was a 400 caused by sending literal `service_tier="standard"`; the fix was mapping repo `standard` to API `default`. Another observed failure was truncated Agent 3 structured JSON with a 2000-token budget; the fix was `CONSOLIDATION_RANKING_MAX_OUTPUT_TOKENS = 6000`.
 - Emit structured application logs with correlation IDs such as `pipeline_run_id`, `transcript_id`, and `agent_name`.
 - Send exceptions and failed worker jobs to Sentry with transcript contents redacted.
 - Use Sentry breadcrumbs for pipeline step transitions, model calls, retries, and validation failures, but never attach raw confidential transcript text.
+
+Local pipeline runs:
+
+- `backend/scripts/run_pipeline_for_transcript.py` disables database usage recording by default so local artifact review can run without Postgres.
+- Pass `--record-usage` when Postgres is running and migrations have been applied.
+- A timeout on `localhost:5432` after an OpenAI response usually means usage recording could not connect to Postgres; it is not caused by `service_tier: "flex"`.
+- `service_tier: "flex"` may increase OpenAI latency, but it does not affect database connectivity.
 
 Frontend and reporting expectations:
 

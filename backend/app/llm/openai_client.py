@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from typing import Any, Literal, Protocol, TypeVar
 
@@ -14,11 +15,27 @@ from app.services.llm_usage_service import LLMUsageEventCreate
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel)
 ServiceTier = Literal["flex", "standard"]
+OpenAIEndpoint = Literal["chat_completions", "responses"]
 DEFAULT_SERVICE_TIER: ServiceTier = "flex"
+DEFAULT_OPENAI_ENDPOINT: OpenAIEndpoint = "chat_completions"
+TRANSIENT_OPENAI_ERROR_NAMES = {
+    "APIConnectionError",
+    "APITimeoutError",
+    "InternalServerError",
+    "RateLimitError",
+}
+LOGGER = logging.getLogger(__name__)
 
 
 def get_openai_client() -> OpenAI:
     return OpenAI(api_key=settings.openai_api_key)
+
+
+def is_retryable_llm_error(error: Exception) -> bool:
+    status_code = getattr(error, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code == 429 or status_code >= 500
+    return error.__class__.__name__ in TRANSIENT_OPENAI_ERROR_NAMES
 
 
 class UsageRecorder(Protocol):
@@ -59,8 +76,10 @@ class OpenAIClient:
         context: LLMCallContext,
         max_output_tokens: int = settings.openai_max_output_tokens,
         service_tier: ServiceTier = DEFAULT_SERVICE_TIER,
+        endpoint: OpenAIEndpoint = DEFAULT_OPENAI_ENDPOINT,
     ) -> ResponseModelT:
         self._validate_service_tier(service_tier)
+        self._validate_endpoint(endpoint)
         started_at = time.perf_counter()
         last_error: Exception | None = None
         last_input_tokens = 0
@@ -77,6 +96,7 @@ class OpenAIClient:
                     response_model=response_model,
                     max_output_tokens=max_output_tokens,
                     service_tier=service_tier,
+                    endpoint=endpoint,
                 )
                 latency_ms = self._elapsed_ms(started_at)
                 input_tokens, output_tokens = self._extract_token_usage(response)
@@ -85,6 +105,14 @@ class OpenAIClient:
                 parsed = self._parse_response(response, response_model)
             except Exception as exc:
                 last_error = exc
+                self._log_openai_failure(
+                    error=exc,
+                    model=model,
+                    endpoint=endpoint,
+                    service_tier=service_tier,
+                    context=context,
+                    attempt_index=attempt_index,
+                )
                 if self._should_retry(exc) and attempt_index < self.attempts - 1:
                     continue
                 break
@@ -131,10 +159,39 @@ class OpenAIClient:
         response_model: type[ResponseModelT],
         max_output_tokens: int,
         service_tier: ServiceTier,
+        endpoint: OpenAIEndpoint,
+    ) -> Any:
+        if endpoint == "responses":
+            return self._create_responses_structured_response(
+                model=model,
+                system_prompt=system_prompt,
+                input_payload=input_payload,
+                response_model=response_model,
+                max_output_tokens=max_output_tokens,
+                service_tier=service_tier,
+            )
+        return self._create_chat_completions_structured_response(
+            model=model,
+            system_prompt=system_prompt,
+            input_payload=input_payload,
+            response_model=response_model,
+            max_output_tokens=max_output_tokens,
+            service_tier=service_tier,
+        )
+
+    def _create_chat_completions_structured_response(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        input_payload: dict[str, Any],
+        response_model: type[ResponseModelT],
+        max_output_tokens: int,
+        service_tier: ServiceTier,
     ) -> Any:
         request: dict[str, Any] = {
             "model": model,
-            "service_tier": service_tier,
+            "service_tier": self._api_service_tier(service_tier),
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {
@@ -151,9 +208,37 @@ class OpenAIClient:
         sdk_client = self.sdk_client or get_openai_client()
         return sdk_client.beta.chat.completions.parse(**request)
 
+    def _create_responses_structured_response(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        input_payload: dict[str, Any],
+        response_model: type[ResponseModelT],
+        max_output_tokens: int,
+        service_tier: ServiceTier,
+    ) -> Any:
+        request: dict[str, Any] = {
+            "model": model,
+            "service_tier": self._api_service_tier(service_tier),
+            "instructions": system_prompt,
+            "input": json.dumps(input_payload, ensure_ascii=False, separators=(",", ":")),
+            "text_format": response_model,
+            "max_output_tokens": max_output_tokens,
+        }
+        if settings.openai_temperature is not None:
+            request["temperature"] = settings.openai_temperature
+
+        sdk_client = self.sdk_client or get_openai_client()
+        return sdk_client.responses.parse(**request)
+
     def _parse_response(
         self, response: Any, response_model: type[ResponseModelT]
     ) -> ResponseModelT:
+        parsed_response = getattr(response, "output_parsed", None)
+        if parsed_response is not None:
+            return response_model.model_validate(parsed_response)
+
         message = response.choices[0].message
         parsed = getattr(message, "parsed", None)
         if parsed is None:
@@ -228,21 +313,69 @@ class OpenAIClient:
         return error.__class__.__name__
 
     def _should_retry(self, error: Exception) -> bool:
-        status_code = getattr(error, "status_code", None)
-        if isinstance(status_code, int):
-            return status_code == 429 or status_code >= 500
-
-        non_retryable_error_names = {
-            "AuthenticationError",
-            "BadRequestError",
-            "NotFoundError",
-            "PermissionDeniedError",
-        }
-        return error.__class__.__name__ not in non_retryable_error_names
+        return is_retryable_llm_error(error)
 
     def _validate_service_tier(self, service_tier: str) -> None:
         if service_tier not in ("flex", "standard"):
             raise ValueError("service_tier must be 'flex' or 'standard'")
 
+    def _validate_endpoint(self, endpoint: str) -> None:
+        if endpoint not in ("chat_completions", "responses"):
+            raise ValueError("endpoint must be 'chat_completions' or 'responses'")
+
     def _elapsed_ms(self, started_at: float) -> int:
         return max(0, int((time.perf_counter() - started_at) * 1000))
+
+    def _log_openai_failure(
+        self,
+        *,
+        error: Exception,
+        model: str,
+        endpoint: OpenAIEndpoint,
+        service_tier: ServiceTier,
+        context: LLMCallContext,
+        attempt_index: int,
+    ) -> None:
+        LOGGER.warning(
+            "OpenAI structured output call failed: error_type=%s status_code=%s "
+            "request_id=%s model=%s endpoint=%s service_tier=%s agent_name=%s "
+            "api_service_tier=%s pipeline_step=%s transcript_id=%r chunk_id=%r "
+            "attempt=%s/%s retryable=%s",
+            self._sanitize_error_type(error),
+            self._status_code(error),
+            self._request_id(error),
+            model,
+            endpoint,
+            service_tier,
+            context.agent_name,
+            self._api_service_tier(service_tier),
+            context.pipeline_step,
+            context.transcript_id,
+            context.chunk_id,
+            attempt_index + 1,
+            self.attempts,
+            self._should_retry(error),
+        )
+
+    def _status_code(self, error: Exception) -> int | None:
+        status_code = getattr(error, "status_code", None)
+        return status_code if isinstance(status_code, int) else None
+
+    def _request_id(self, error: Exception) -> str | None:
+        request_id = getattr(error, "request_id", None) or getattr(error, "_request_id", None)
+        if request_id:
+            return str(request_id)
+
+        response = getattr(error, "response", None)
+        headers = getattr(response, "headers", None)
+        if headers is not None:
+            for name in ("x-request-id", "openai-request-id"):
+                value = headers.get(name)
+                if value:
+                    return str(value)
+        return None
+
+    def _api_service_tier(self, service_tier: ServiceTier) -> str:
+        if service_tier == "standard":
+            return "default"
+        return service_tier

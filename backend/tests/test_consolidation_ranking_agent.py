@@ -19,7 +19,14 @@ class FakeLLMClient:
 
     def parse_structured_output(self, **kwargs):
         self.calls.append(kwargs)
-        return self.results.pop(0)
+        result = self.results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+class RetryableOpenAIError(Exception):
+    status_code = 500
 
 
 def _candidate(
@@ -87,6 +94,9 @@ def test_model_defaults_to_settings_openai_model() -> None:
 
     assert settings.openai_model == "gpt-5.5"
     assert llm_client.calls[0]["model"] == settings.openai_model
+    assert llm_client.calls[0]["endpoint"] == "responses"
+    assert llm_client.calls[0]["service_tier"] == "standard"
+    assert llm_client.calls[0]["max_output_tokens"] == 6000
 
 
 def test_constructor_can_override_model() -> None:
@@ -97,6 +107,27 @@ def test_constructor_can_override_model() -> None:
     )
 
     assert llm_client.calls[0]["model"] == "gpt-custom"
+
+
+def test_retryable_primary_model_failure_falls_back_to_mid_model() -> None:
+    llm_client = FakeLLMClient([RetryableOpenAIError("server error"), _result([])])
+
+    ranked = ConsolidationRankingAgent(llm_client=llm_client).run([_candidate()])
+
+    assert ranked == []
+    assert [call["model"] for call in llm_client.calls] == [
+        settings.openai_model,
+        settings.openai_model_mid,
+    ]
+
+
+def test_non_retryable_primary_model_failure_does_not_fall_back() -> None:
+    llm_client = FakeLLMClient([ValueError("bad local output")])
+
+    with pytest.raises(ValueError, match="bad local output"):
+        ConsolidationRankingAgent(llm_client=llm_client).run([_candidate()])
+
+    assert len(llm_client.calls) == 1
 
 
 def test_duplicate_candidates_collapse_into_one_ranked_signal() -> None:
