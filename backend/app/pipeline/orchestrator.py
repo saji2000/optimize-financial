@@ -26,7 +26,7 @@ class PipelineOrchestrator:
         llm_client = None if record_usage else OpenAIClient()
         self.signal_extraction_agent = SignalExtractionAgent(llm_client=llm_client)
         self.consolidation_ranking_agent = ConsolidationRankingAgent(llm_client=llm_client)
-        self.evidence_validation_agent = EvidenceValidationAgent()
+        self.evidence_validation_agent = EvidenceValidationAgent(llm_client=llm_client)
         self.final_formatting_agent = FinalFormattingAgent()
         self.agent_output_writer = agent_output_writer or AgentOutputWriter()
 

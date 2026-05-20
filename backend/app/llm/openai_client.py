@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any, Literal, Protocol, TypeVar
+from typing import Any, Callable, Literal, Protocol, TypeVar
 
 from openai import OpenAI
 from pydantic import BaseModel
@@ -18,6 +18,7 @@ ServiceTier = Literal["flex", "standard"]
 OpenAIEndpoint = Literal["chat_completions", "responses"]
 DEFAULT_SERVICE_TIER: ServiceTier = "flex"
 DEFAULT_OPENAI_ENDPOINT: OpenAIEndpoint = "chat_completions"
+DEFAULT_RETRY_DELAY_SECONDS = 60.0
 TRANSIENT_OPENAI_ERROR_NAMES = {
     "APIConnectionError",
     "APITimeoutError",
@@ -58,13 +59,19 @@ class OpenAIClient:
         sdk_client: OpenAI | None = None,
         usage_recorder: UsageRecorder | None = None,
         attempts: int = 3,
+        initial_retry_delay_seconds: float = DEFAULT_RETRY_DELAY_SECONDS,
+        sleep_func: Callable[[float], None] = time.sleep,
     ) -> None:
         if attempts <= 0:
             raise ValueError("attempts must be greater than zero")
+        if initial_retry_delay_seconds < 0:
+            raise ValueError("initial_retry_delay_seconds must be non-negative")
 
         self.sdk_client = sdk_client
         self.usage_recorder = usage_recorder
         self.attempts = attempts
+        self.initial_retry_delay_seconds = initial_retry_delay_seconds
+        self.sleep_func = sleep_func
 
     def parse_structured_output(
         self,
@@ -114,6 +121,10 @@ class OpenAIClient:
                     attempt_index=attempt_index,
                 )
                 if self._should_retry(exc) and attempt_index < self.attempts - 1:
+                    self._sleep_before_retry(
+                        attempt_index=attempt_index,
+                        context=context,
+                    )
                     continue
                 break
             else:
@@ -314,6 +325,29 @@ class OpenAIClient:
 
     def _should_retry(self, error: Exception) -> bool:
         return is_retryable_llm_error(error)
+
+    def _sleep_before_retry(
+        self,
+        *,
+        attempt_index: int,
+        context: LLMCallContext,
+    ) -> None:
+        delay_seconds = self._retry_delay_seconds(attempt_index)
+        LOGGER.warning(
+            "Delaying OpenAI retry: delay_seconds=%s agent_name=%s "
+            "pipeline_step=%s transcript_id=%r chunk_id=%r next_attempt=%s/%s",
+            delay_seconds,
+            context.agent_name,
+            context.pipeline_step,
+            context.transcript_id,
+            context.chunk_id,
+            attempt_index + 2,
+            self.attempts,
+        )
+        self.sleep_func(delay_seconds)
+
+    def _retry_delay_seconds(self, attempt_index: int) -> float:
+        return self.initial_retry_delay_seconds * (2 ** attempt_index)
 
     def _validate_service_tier(self, service_tier: str) -> None:
         if service_tier not in ("flex", "standard"):
