@@ -5,8 +5,15 @@ from app.llm.openai_client import OpenAIClient
 from app.pipeline.orchestrator import PipelineOrchestrator
 from app.pipeline.agents.consolidation_ranking_agent import ConsolidationRankingAgent
 from app.pipeline.agents.evidence_validation_agent import EvidenceValidationAgent
+from app.pipeline.agents.final_formatting_agent import FinalFormattingAgent
 from app.pipeline.agents.signal_extraction_agent import SignalExtractionAgent
-from app.pipeline.schemas import CandidateSignal, PreparedTranscript, RankedSignal, ValidatedSignal
+from app.pipeline.schemas import (
+    CandidateSignal,
+    FinalSignal,
+    PreparedTranscript,
+    RankedSignal,
+    ValidatedSignal,
+)
 
 
 class NoopAgentOutputWriter:
@@ -100,6 +107,24 @@ def test_pipeline_orchestrator_extracts_supported_advisor_signals(monkeypatch) -
             for candidate in ranked_candidates
         ]
 
+    def fake_final_formatting_run(
+        self: FinalFormattingAgent,
+        validated_candidates: list[ValidatedSignal],
+    ) -> list[FinalSignal]:
+        return [
+            FinalSignal(
+                transcript_id=candidate.transcript_id,
+                item_type=candidate.item_type,
+                rank=candidate.rank,
+                category=candidate.category,
+                advisor_quote=candidate.advisor_quote,
+                timestamp=candidate.timestamp,
+                evidence_strength=candidate.evidence_strength,
+                rationale=candidate.rationale,
+            )
+            for candidate in validated_candidates
+        ]
+
     monkeypatch.setattr(SignalExtractionAgent, "run", fake_signal_extraction_run)
     monkeypatch.setattr(
         ConsolidationRankingAgent,
@@ -107,6 +132,7 @@ def test_pipeline_orchestrator_extracts_supported_advisor_signals(monkeypatch) -
         fake_consolidation_ranking_run,
     )
     monkeypatch.setattr(EvidenceValidationAgent, "run", fake_evidence_validation_run)
+    monkeypatch.setattr(FinalFormattingAgent, "run", fake_final_formatting_run)
     transcript = """
 00:01:00 Optimize Rep: Our platform has a modern client portal.
 00:01:15 Advisor: The technology at my current firm is slow and clients complain about the portal.
@@ -165,6 +191,24 @@ def test_pipeline_orchestrator_writes_all_agent_outputs_in_order(monkeypatch) ->
             for candidate in ranked_candidates
         ]
 
+    def fake_final_formatting_run(
+        self: FinalFormattingAgent,
+        validated_candidates: list[ValidatedSignal],
+    ) -> list[FinalSignal]:
+        return [
+            FinalSignal(
+                transcript_id=candidate.transcript_id,
+                item_type=candidate.item_type,
+                rank=candidate.rank,
+                category=candidate.category,
+                advisor_quote=candidate.advisor_quote,
+                timestamp=candidate.timestamp,
+                evidence_strength=candidate.evidence_strength,
+                rationale=candidate.rationale,
+            )
+            for candidate in validated_candidates
+        ]
+
     monkeypatch.setattr(SignalExtractionAgent, "run", fake_signal_extraction_run)
     monkeypatch.setattr(
         ConsolidationRankingAgent,
@@ -172,6 +216,7 @@ def test_pipeline_orchestrator_writes_all_agent_outputs_in_order(monkeypatch) ->
         fake_consolidation_ranking_run,
     )
     monkeypatch.setattr(EvidenceValidationAgent, "run", fake_evidence_validation_run)
+    monkeypatch.setattr(FinalFormattingAgent, "run", fake_final_formatting_run)
     writer = RecordingAgentOutputWriter()
     transcript = "00:01:00 Advisor: I need stronger operations support."
 
@@ -243,6 +288,24 @@ def test_pipeline_orchestrator_writer_failure_logs_warning_and_continues(
             for candidate in ranked_candidates
         ]
 
+    def fake_final_formatting_run(
+        self: FinalFormattingAgent,
+        validated_candidates: list[ValidatedSignal],
+    ) -> list[FinalSignal]:
+        return [
+            FinalSignal(
+                transcript_id=candidate.transcript_id,
+                item_type=candidate.item_type,
+                rank=candidate.rank,
+                category=candidate.category,
+                advisor_quote=candidate.advisor_quote,
+                timestamp=candidate.timestamp,
+                evidence_strength=candidate.evidence_strength,
+                rationale=candidate.rationale,
+            )
+            for candidate in validated_candidates
+        ]
+
     monkeypatch.setattr(SignalExtractionAgent, "run", fake_signal_extraction_run)
     monkeypatch.setattr(
         ConsolidationRankingAgent,
@@ -250,6 +313,7 @@ def test_pipeline_orchestrator_writer_failure_logs_warning_and_continues(
         fake_consolidation_ranking_run,
     )
     monkeypatch.setattr(EvidenceValidationAgent, "run", fake_evidence_validation_run)
+    monkeypatch.setattr(FinalFormattingAgent, "run", fake_final_formatting_run)
     transcript = "00:01:00 Advisor: I need stronger operations support."
 
     with caplog.at_level(logging.WARNING):
@@ -275,3 +339,9 @@ def test_pipeline_orchestrator_can_disable_usage_recording() -> None:
     assert orchestrator.consolidation_ranking_agent.llm_client.usage_recorder is None
     assert isinstance(orchestrator.evidence_validation_agent.llm_client, OpenAIClient)
     assert orchestrator.evidence_validation_agent.llm_client.usage_recorder is None
+    assert isinstance(orchestrator.final_formatting_agent.llm_client, OpenAIClient)
+    assert orchestrator.final_formatting_agent.llm_client.usage_recorder is None
+    assert (
+        orchestrator.final_formatting_agent.llm_client
+        is orchestrator.signal_extraction_agent.llm_client
+    )
