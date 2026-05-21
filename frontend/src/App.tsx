@@ -1,12 +1,13 @@
 import { Outlet } from "react-router-dom";
-
-import { Layout } from "./components/Layout";
+import { AuthProvider } from "./auth/AuthProvider";
+import { SignalsProvider } from "./data/SignalsStore";
 
 export function App() {
   return (
-    <Layout>
-      <Outlet />
-    </Layout>
+    <AuthProvider>
+      <SignalsProvider>
+        <Outlet />
+      </SignalsProvider>
+    </AuthProvider>
   );
 }
-
