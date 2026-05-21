@@ -2,6 +2,18 @@ import { EvidenceKind, SignalType, TranscriptStatus } from "../data/mockData";
 
 export type DataMode = "mock" | "api" | "hybrid";
 
+export interface AuthUserRead {
+  username: string;
+  name: string;
+  role: string;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  token_type: "bearer";
+  user: AuthUserRead;
+}
+
 export interface TranscriptSummaryRead {
   id: string;
   title: string;

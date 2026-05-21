@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://advisor:advisor@localhost:5432/advisor_signal_extraction"
     redis_url: str = "redis://localhost:6379/0"
     frontend_api_base_url: str = "http://localhost:8000"
+    auth_token_secret: str = "local-development-auth-secret-change-me"
+    auth_token_ttl_seconds: int = 8 * 60 * 60
     openai_api_key: str = ""
     openai_model: str = "gpt-5.5"
     openai_model_mid: str = "gpt-5.4"

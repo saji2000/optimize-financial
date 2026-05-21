@@ -17,6 +17,9 @@ Confidentiality rules apply: do not render raw transcript text outside the trans
 
 The app now uses a frontend-first hybrid data layer:
 
+- App auth is real, not demo-only: `src/pages/LoginPage.tsx` submits username/password to the backend, and signed-in users receive a bearer token.
+- The only configured local user is `curtis`. The plaintext password is intentionally not stored in frontend code or documented in repo guidance; the backend verifies it with a salted PBKDF2-SHA256 hash.
+- Non-authenticated users cannot see logged-in pages. `AppShell` checks `AuthProvider.user` before mounting `DataProvider` and `SignalsProvider`.
 - Backend remains the factual source for uploaded transcripts, prepared turns, final Agent-5 signals, and pipeline status.
 - Local demo enrichment preserves polished advisor/client/duration/review metadata for presentation.
 - API-backed transcript and pipeline cost/token/call/retry values come from backend `llm_usage_events` aggregates, not demo enrichment.
@@ -35,15 +38,17 @@ Stack:
 - React 18 + TypeScript strict + Vite 5.
 - React Router v6 with `createBrowserRouter`.
 - No React Query or global state library.
-- Contexts: `AuthProvider`, `DataProvider`, `SignalsProvider`.
+- Contexts: `AuthProvider`, `DataProvider`, `SignalsProvider`. `AuthProvider` wraps all routes; `DataProvider` and `SignalsProvider` mount only inside the authenticated `AppShell`.
 - No ESLint; `npm run lint` is `tsc --noEmit`.
 - One stylesheet: `src/styles/globals.css`.
 
 ## Important Files
 
-- `src/App.tsx`: wraps routes in `AuthProvider`, `DataProvider`, and `SignalsProvider`.
-- `src/api/client.ts`: API base/data mode constants and fetch helpers.
-- `src/api/types.ts`: backend DTO types.
+- `src/App.tsx`: wraps routes in `AuthProvider`.
+- `src/components/AppShell.tsx`: redirects unsigned users to `/login`, then mounts `DataProvider` and `SignalsProvider` for authenticated app pages.
+- `src/auth/AuthProvider.tsx`: persists the bearer token and user in local storage, validates existing sessions with `GET /auth/me`, and clears state on `401`.
+- `src/api/client.ts`: API base/data mode constants, auth/session storage key, bearer-token fetch helpers, and upload/list helpers.
+- `src/api/types.ts`: backend DTO types, including auth DTOs.
 - `src/api/mappers.ts`: backend DTO to frontend view-model mapping.
 - `src/data/DataProvider.tsx`: hybrid data context and hooks.
 - `src/data/SignalsStore.tsx`: optimistic local review status/flag state.
@@ -57,7 +62,14 @@ Stack:
 
 ## Data Flow
 
-`DataProvider` loads backend data in `api`/`hybrid` modes:
+`AuthProvider` handles sign-in and session validation:
+
+- `POST /auth/login`
+- `GET /auth/me`
+- Stores `{ accessToken, user }` in local storage under `optimize_auth_session`.
+- Clears the stored session and current user when API helpers receive `401`.
+
+`DataProvider` loads backend data in `api`/`hybrid` modes only after `AppShell` confirms a signed-in user:
 
 - `GET /transcripts`
 - `GET /transcripts/{id}`
@@ -74,6 +86,8 @@ Usage fields:
 `UploadPage` posts `.txt` files to:
 
 - `POST /transcripts` as multipart `file` plus optional `title`.
+
+API helpers automatically attach `Authorization: Bearer <token>` when a stored token exists. Do not bypass `src/api/client.ts` for authenticated backend calls unless there is a clear reason.
 
 `SignalsProvider` initializes from `DataProvider.apiSignals`, keeps local optimistic review status/flag changes, and exposes:
 
@@ -125,7 +139,7 @@ Transcript highlighting:
 
 ## Routes
 
-- `/login`: demo login.
+- `/login`: username/password login. Redirects to `/dashboard` when a valid session already exists.
 - `/dashboard`: KPIs, status bars, activity, queue.
 - `/transcripts`: searchable/sortable transcript library.
 - `/transcripts/:id`: transcript turns and transcript-scoped final signals.
@@ -154,10 +168,18 @@ FastAPI local CORS is enabled in `backend/app/main.py` for Vite dev origins on `
 If the frontend loads but shows mock/empty data:
 
 1. Check `http://localhost:8000/health`.
-2. Check `http://localhost:8000/transcripts`.
-3. Confirm the backend database has rows; import artifacts if needed.
-4. Check browser network/CORS errors.
-5. Confirm `VITE_API_BASE` points to the running backend.
+2. Sign in first; `/transcripts`, `/signals`, `/pipeline-runs`, `/review`, and `/exports` require bearer authentication.
+3. Check `GET /auth/me` and confirm the stored token is valid.
+4. Check `http://localhost:8000/transcripts` with the bearer token.
+5. Confirm the backend database has rows; import artifacts if needed.
+6. Check browser network/CORS errors.
+7. Confirm `VITE_API_BASE` points to the running backend.
+
+If login fails with "Unable to sign in":
+
+1. Confirm the backend running at `VITE_API_BASE` includes the current `/auth/login` route; an older backend on port `8000` will fail.
+2. Confirm CORS allows the current Vite port.
+3. Confirm the username is `curtis` and use the owner-provided local password.
 
 If API-backed rows show zero cost/tokens:
 
@@ -219,6 +241,8 @@ Before changing frontend behavior:
 
 - Read `src/styles/globals.css` and reuse existing classes.
 - Check `src/components/primitives.tsx` before adding new atoms.
+- Keep `DataProvider` and `SignalsProvider` inside the authenticated shell so signed-out users cannot mount logged-in data views.
+- Use API helpers from `src/api/client.ts` so bearer tokens and `401` session clearing stay centralized.
 - Use `DataProvider`/`SignalsProvider` hooks for page data; avoid direct page-level mock array imports.
 - Keep `Signal.transcriptId` populated for any signal data.
 - Keep raw transcript text inside `TranscriptDetailPage` only.

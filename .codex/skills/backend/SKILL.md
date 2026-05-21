@@ -49,6 +49,16 @@ Local frontend integration:
 - `backend/app/main.py` includes `CORSMiddleware` for Vite dev origins matching `localhost` and `127.0.0.1` on ports `5170-5179`.
 - Keep CORS local and explicit. Do not broaden production origins without an actual deployment target and auth story.
 
+Authentication:
+
+- Local app auth is implemented in `backend/app/api/routes/auth.py`, `backend/app/domain/auth_schema.py`, and `backend/app/security/auth.py`.
+- The only configured local application user is `curtis`, represented by `CURTIS_USER`; this user has full access and is not attached to transcript ownership or row-level data permissions.
+- The password is verified with a salted PBKDF2-SHA256 hash (`PASSWORD_ITERATIONS = 310_000`). Store only the generated salt and hash in code or config; do not commit or document the plaintext password.
+- Login returns a signed bearer token from `POST /auth/login`; `GET /auth/me` validates and returns the current user.
+- `settings.auth_token_secret` signs local bearer tokens and should be overridden outside local development. `settings.auth_token_ttl_seconds` controls expiry.
+- `backend/app/main.py` protects transcript, signal, review, pipeline-run, and export routers with `Depends(require_current_user)`. Keep `/health` and `/auth/*` public.
+- Tests that need authenticated API access can generate a token with `create_access_token(CURTIS_USER)` instead of embedding the plaintext password.
+
 ## V1 Database
 
 Current V1 tables are introduced by `backend/migrations/versions/20260520_0002_add_v1_pipeline_tables.py`.
@@ -82,7 +92,17 @@ When adding or changing persistence:
 
 Implemented V1 routes:
 
+- `POST /auth/login`
+  - Accepts `{ username, password }`.
+  - Returns `{ access_token, token_type, user }` for the configured local user.
+  - Rejects invalid credentials with `401`.
+
+- `GET /auth/me`
+  - Requires `Authorization: Bearer <token>`.
+  - Returns the current authenticated user.
+
 - `POST /transcripts`
+  - Requires bearer authentication.
   - Accepts `multipart/form-data` with a `.txt` file field named `file` and optional `title`.
   - Uses a stdlib multipart parser in `backend/app/api/routes/transcripts.py`; `python-multipart` is not currently required.
   - Creates a `transcripts` row with `queued` status.
@@ -91,26 +111,32 @@ Implemented V1 routes:
   - Returns `{ id, title, status }`.
 
 - `GET /transcripts`
+  - Requires bearer authentication.
   - Returns `id`, `title`, `status`, `created_at`, `driver_count`, `blocker_count`, and `usage`.
   - Signal counts come from persisted `final_signals`.
   - `usage` is aggregated from `llm_usage_events` by matching `llm_usage_events.transcript_id` to `transcripts.id`.
 
 - `GET /transcripts/{id}`
+  - Requires bearer authentication.
   - Returns transcript summary plus `usage`, `updated_at`, sanitized failure fields, ordered prepared turns, and final signals.
 
 - `GET /transcripts/{id}/turns`
+  - Requires bearer authentication.
   - Returns ordered prepared transcript turns for the transcript viewer.
 
 - `GET /signals`
+  - Requires bearer authentication.
   - Returns all final Agent-5 signals.
   - Optional query: `transcript_id`.
   - Response shape is public final schema plus internal generated `id`.
 
 - `GET /pipeline-runs`
+  - Requires bearer authentication.
   - Returns run id, transcript id, status, timestamps, sanitized failure fields, `usage`, and `usage_by_step`.
   - `usage` and `usage_by_step` are aggregated from `llm_usage_events` by matching `llm_usage_events.pipeline_run_id` to `pipeline_runs.id`.
 
 - `GET /pipeline-runs/{id}`
+  - Requires bearer authentication.
   - Returns one run plus `usage` and `usage_by_step`, or 404.
 
 Review and export routes are still placeholders. Keep review/export/dashboard-specific backend behavior out of V1 unless the user asks for it.
@@ -292,7 +318,7 @@ If Docker Desktop reports a BuildKit snapshot/export error such as `parent snaps
 Key V1 tests:
 
 - `backend/tests/test_v1_persistence.py`: transcript creation, turns, final signals, run transitions.
-- `backend/tests/test_v1_api.py`: upload, list/detail, turns, signals, pipeline-run endpoints.
+- `backend/tests/test_v1_api.py`: auth enforcement/login rejection, upload, list/detail, turns, signals, pipeline-run endpoints.
 - `backend/tests/test_worker_pipeline_task.py`: worker success/failure with mocked orchestrator.
 - `backend/tests/test_artifact_import.py`: sanitized artifact import.
 - `backend/tests/test_alembic_migrations.py`: migration chain smoke.
@@ -320,12 +346,14 @@ Treat all real transcripts and artifact outputs as confidential.
 - Do not log `raw_text`, prompt payloads, artifact contents, advisor quotes from real calls, or model output.
 - Store only sanitized failure metadata in `transcripts` and `pipeline_runs`.
 - Do not expose raw transcript text through V1 APIs; expose prepared turns and final signals only.
+- Do not log auth bearer tokens or plaintext passwords.
 
 ## Change Checklist
 
 Before changing backend behavior:
 
 - Read the route, service, repository, model, and migration path for the feature.
+- If touching protected API routes, verify unauthenticated requests still return `401` and frontend requests include the bearer token.
 - Keep API, worker, orchestrator, agent, service, and repository boundaries separate.
 - Preserve the existing bounded Agent 1-5 pipeline unless the user explicitly asks for a redesign.
 - Add or update Alembic migration and model imports for schema changes.

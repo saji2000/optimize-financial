@@ -120,7 +120,7 @@ Open:
 
 - Frontend: `http://localhost:5173`
 - Backend health: `http://localhost:8000/health`
-- Transcript API: `http://localhost:8000/transcripts`
+- Transcript API: `http://localhost:8000/transcripts` after signing in; protected API routes require a bearer token.
 
 If Docker Desktop reports a BuildKit snapshot/export error such as `parent snapshot ... does not exist`, treat it as a Docker cache/export issue, not an application bug. Build `backend` and `frontend` separately as shown above instead of using one parallel `docker compose up -d --build backend worker frontend`.
 
@@ -149,6 +149,12 @@ Important backend concerns:
 
 - Use FastAPI, Pydantic, SQLAlchemy, Alembic, Celery/Redis, PostgreSQL, and the OpenAI Python SDK.
 - FastAPI local CORS is enabled in `backend/app/main.py` for Vite dev origins on `localhost` and `127.0.0.1` ports `5170-5179`; do not broaden production origins without an explicit deployment/auth plan.
+- Local app authentication is implemented in `backend/app/api/routes/auth.py`, `backend/app/domain/auth_schema.py`, and `backend/app/security/auth.py`.
+- The only configured local application user is `curtis`; this user has full access and is not connected to transcript ownership or row-level permissions.
+- The password is verified with a salted PBKDF2-SHA256 hash and fixed iteration count. Store only the generated salt and hash in code or configuration; never commit or document the plaintext password.
+- `POST /auth/login` returns a signed bearer token, and `GET /auth/me` validates existing sessions. Override `AUTH_TOKEN_SECRET` outside local development.
+- `backend/app/main.py` protects transcript, signal, review, pipeline-run, and export routers with `Depends(require_current_user)`. Keep `/health` and `/auth/*` public.
+- Backend tests that need authenticated API access should create a token with `create_access_token(CURTIS_USER)` rather than embedding plaintext credentials.
 - The Celery app is `app.workers.celery_app.celery_app`; Docker Compose must use `celery -A app.workers.celery_app.celery_app worker --loglevel=INFO`.
 - `backend/app/workers/celery_app.py` must include `app.workers.tasks` so the worker registers `run_transcript_pipeline`; a healthy worker log lists `. run_transcript_pipeline` under `[tasks]`.
 - Keep prompt files in `backend/app/prompts/` with explicit version suffixes such as `_v1.md`.
@@ -210,6 +216,9 @@ Current frontend integration mode is hybrid:
 - `mock` mode keeps the original mock-only polished demo.
 - `api` mode uses backend-only data with minimal fallback display metadata.
 - `hybrid` mode uses backend transcripts, prepared turns, final signals, and pipeline status when available, then merges local demo enrichment for advisor/client/duration/review/cost polish.
+- Frontend auth is real, not demo-only. `src/pages/LoginPage.tsx` submits username/password to `POST /auth/login`; `src/auth/AuthProvider.tsx` stores the bearer token, validates with `GET /auth/me`, and clears session state on `401`.
+- `src/App.tsx` wraps routes only in `AuthProvider`. `src/components/AppShell.tsx` redirects signed-out users to `/login` and only then mounts `DataProvider` and `SignalsProvider`, so logged-in data views do not mount for unauthenticated users.
+- API helpers in `src/api/client.ts` automatically attach `Authorization: Bearer <token>` from local storage. Do not bypass these helpers for protected backend calls without a clear reason.
 - Frontend `Signal` includes `transcriptId`; review "open in context" must navigate to that real transcript id.
 - Upload sends each `.txt` file as multipart form data to `POST /transcripts` and polls `GET /transcripts/{id}` for queued/running/completed/failed status.
 

@@ -1,5 +1,7 @@
 import {
+  AuthUserRead,
   DataMode,
+  LoginResponse,
   PipelineRunRead,
   SignalRead,
   TranscriptDetailRead,
@@ -10,6 +12,16 @@ import {
 
 export const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 export const DATA_MODE: DataMode = parseDataMode(import.meta.env.VITE_DATA_MODE);
+export const AUTH_SESSION_STORAGE_KEY = "optimize_auth_session";
+
+export class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, statusText: string) {
+    super(`Request failed ${status} ${statusText}`);
+    this.status = status;
+  }
+}
 
 function parseDataMode(value: unknown): DataMode {
   return value === "mock" || value === "api" || value === "hybrid" ? value : "hybrid";
@@ -20,17 +32,37 @@ function endpoint(path: string) {
 }
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  if (!(init?.body instanceof FormData) && !headers.has("content-type")) {
+    headers.set("content-type", "application/json");
+  }
+  if (!headers.has("authorization")) {
+    const token = getStoredAccessToken();
+    if (token) headers.set("authorization", `Bearer ${token}`);
+  }
+
   const res = await fetch(endpoint(path), {
     ...init,
-    headers: init?.body instanceof FormData ? init.headers : {
-      "content-type": "application/json",
-      ...init?.headers,
-    },
+    headers,
   });
   if (!res.ok) {
-    throw new Error(`Request failed ${res.status} ${res.statusText}`);
+    if (res.status === 401) window.dispatchEvent(new Event("optimize-auth-unauthorized"));
+    throw new ApiError(res.status, res.statusText);
   }
   return res.json() as Promise<T>;
+}
+
+export function login(username: string, password: string) {
+  return fetchJson<LoginResponse>("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export function getCurrentUser(accessToken: string) {
+  return fetchJson<AuthUserRead>("/auth/me", {
+    headers: { authorization: `Bearer ${accessToken}` },
+  });
 }
 
 export function listTranscripts() {
@@ -62,4 +94,16 @@ export function uploadTranscript(file: File) {
     method: "POST",
     body: data,
   });
+}
+
+function getStoredAccessToken() {
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { accessToken?: unknown };
+    return typeof parsed.accessToken === "string" ? parsed.accessToken : null;
+  } catch {
+    return null;
+  }
 }
