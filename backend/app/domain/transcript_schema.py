@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from app.domain.signal_schema import SignalRead
+from app.domain.usage_schema import LLMUsageSummaryRead
 
 
 class TranscriptCreate(BaseModel):
@@ -20,6 +21,7 @@ class TranscriptSummaryRead(TranscriptRead):
     created_at: datetime
     driver_count: int = 0
     blocker_count: int = 0
+    usage: LLMUsageSummaryRead = Field(default_factory=LLMUsageSummaryRead)
 
 
 class TranscriptTurnRead(BaseModel):

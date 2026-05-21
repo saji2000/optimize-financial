@@ -3,51 +3,56 @@ import { usePipelineSteps, useTranscripts } from "../data/DataProvider";
 
 export function AnalyticsPage() {
   const transcripts = useTranscripts();
-  const stepTotals = usePipelineSteps(transcripts[0]?.id).map((s) => ({ ...s }));
+  const representative = transcripts.find((t) => t.calls > 0) || transcripts[0];
+  const stepTotals = usePipelineSteps(representative?.id).map((s) => ({ ...s }));
   const sumCost = stepTotals.reduce((a, b) => a + b.cost, 0);
   const sumIn = stepTotals.reduce((a, b) => a + b.tokensIn, 0);
   const sumOut = stepTotals.reduce((a, b) => a + b.tokensOut, 0);
   const totalSpend = transcripts.reduce((a, b) => a + b.cost, 0);
+  const retries = stepTotals.reduce((a, b) => a + b.retries, 0);
 
-  const mix = [
-    { model: "claude-sonnet-4-5", share: 0.62, color: "var(--ink)" },
-    { model: "claude-haiku-4-5", share: 0.34, color: "var(--moss)" },
-    { model: "embed-v3 (rerank)", share: 0.04, color: "var(--amber)" },
-  ];
+  const mix = stepTotals.map((s, index) => ({
+    model: s.model,
+    share: sumCost > 0 ? s.cost / sumCost : 0,
+    color: index === 0 ? "var(--ink)" : index === 1 ? "var(--moss)" : "var(--amber)",
+  }));
 
   return (
     <>
-      <TopBar title="Cost & usage" subtitle="Aggregate spend across the 5-step pipeline" />
+      <TopBar title="Cost & usage" subtitle="Estimated API cost from recorded LLM usage" />
       <div className="kpis">
         <KPI
-          label="Total spend · all time"
+          label="Estimated LLM cost"
           value={"$" + totalSpend.toFixed(2)}
           sub={`${transcripts.length} transcripts`}
         />
         <KPI
           label="Avg per transcript"
           value={"$" + (totalSpend / Math.max(transcripts.length, 1)).toFixed(3)}
-          sub="trending –12% MoM"
+          sub="from backend usage events"
           accent="var(--moss)"
         />
         <KPI
           label="Tokens (in / out)"
           value={`${(sumIn / 1000).toFixed(0)}K / ${(sumOut / 1000).toFixed(1)}K`}
-          sub="per representative transcript"
+          sub={stepTotals.length ? "representative transcript" : "No usage recorded yet"}
         />
         <KPI
-          label="Retry rate"
-          value="6.3%"
-          sub="3 of 47 step-runs retried"
+          label="Retries"
+          value={retries}
+          sub={stepTotals.length ? "recorded retries" : "No usage recorded yet"}
           accent="var(--amber)"
         />
       </div>
 
       <div className="grid-2 grid-2--asym">
         <Section
-          eyebrow="Per-step cost · representative transcript"
+          eyebrow="Estimated per-step API cost · representative transcript"
           title="Where the money goes"
         >
+          {stepTotals.length === 0 && (
+            <div className="empty">No usage recorded yet.</div>
+          )}
           <table className="t">
             <thead>
               <tr>
@@ -56,7 +61,7 @@ export function AnalyticsPage() {
                 <th className="num">In</th>
                 <th className="num">Out</th>
                 <th className="num">Retries</th>
-                <th className="num">Cost</th>
+                <th className="num">Estimated cost</th>
               </tr>
             </thead>
             <tbody>
@@ -73,7 +78,7 @@ export function AnalyticsPage() {
                 </tr>
               ))}
               <tr className="row-sum">
-                <td colSpan={5}><b>Total per transcript</b></td>
+                <td colSpan={5}><b>Estimated total per transcript</b></td>
                 <td className="num"><Money value={sumCost} big /></td>
               </tr>
             </tbody>
@@ -98,8 +103,8 @@ export function AnalyticsPage() {
             ))}
           </div>
           <div className="callout callout--soft">
-            <b>Reliability:</b> 3 retries across 47 step runs (6.3%). All retries auto-fell-back
-            to haiku and recovered. Net cost impact: <span className="mono">+$0.041</span>.
+            <b>Reliability:</b> retry counts are summed from persisted LLM usage events.
+            Estimated cost is calculated by the backend pricing table, not invoice data.
           </div>
         </Section>
       </div>

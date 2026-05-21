@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models.transcript import Transcript
 from app.db.models.transcript_turn import TranscriptTurn
+from app.db.repositories.llm_usage_repo import LLMUsageEventRepository
 from app.db.repositories.pipeline_run_repo import PipelineRunRepository
 from app.db.repositories.signal_repo import SignalRepository
 from app.db.repositories.transcript_repo import TranscriptRepository
@@ -13,6 +14,7 @@ from app.domain.transcript_schema import (
     TranscriptSummaryRead,
     TranscriptTurnRead,
 )
+from app.services.llm_usage_service import summarize_usage
 from app.services.signal_service import final_signal_to_read
 
 
@@ -41,9 +43,14 @@ def create_transcript_with_run(
 
 def list_transcripts(db: Session) -> list[TranscriptSummaryRead]:
     transcript_repo = TranscriptRepository(db)
+    usage_repo = LLMUsageEventRepository(db)
     counts = transcript_repo.signal_counts()
     return [
-        transcript_to_summary(transcript, counts.get(transcript.id, {}))
+        transcript_to_summary(
+            transcript,
+            counts.get(transcript.id, {}),
+            usage=summarize_usage(usage_repo.list_by_transcript(transcript.id)),
+        )
         for transcript in transcript_repo.list()
     ]
 
@@ -60,7 +67,8 @@ def get_transcript_detail(transcript_id: str, db: Session) -> TranscriptDetailRe
         final_signal_to_read(signal)
         for signal in SignalRepository(db).list_final_signals(transcript_id=transcript.id)
     ]
-    summary = transcript_to_summary(transcript, counts)
+    usage = summarize_usage(LLMUsageEventRepository(db).list_by_transcript(transcript.id))
+    summary = transcript_to_summary(transcript, counts, usage=usage)
     return TranscriptDetailRead(
         **summary.model_dump(),
         updated_at=transcript.updated_at,
@@ -89,6 +97,7 @@ def transcript_to_read(transcript: Transcript) -> TranscriptRead:
 def transcript_to_summary(
     transcript: Transcript,
     counts: dict[str, int] | None = None,
+    usage=None,
 ) -> TranscriptSummaryRead:
     counts = counts or {}
     return TranscriptSummaryRead(
@@ -98,6 +107,7 @@ def transcript_to_summary(
         created_at=transcript.created_at,
         driver_count=counts.get("driver", 0),
         blocker_count=counts.get("blocker", 0),
+        usage=usage or summarize_usage([]),
     )
 
 

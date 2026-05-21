@@ -137,7 +137,7 @@ export function ExportsPage() {
               </div>
               <div className="small slate">
                 {totalRows} signal rows ·{" "}
-                {target.reduce((a, t) => a + t.cost, 0).toFixed(4)} USD compute incurred
+                {target.reduce((a, t) => a + t.cost, 0).toFixed(4)} USD estimated API cost
               </div>
             </div>
             <Btn>Download.{fmt}</Btn>

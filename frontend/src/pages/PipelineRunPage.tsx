@@ -18,6 +18,7 @@ export function PipelineRunPage() {
   const total = steps.reduce((a, b) => a + b.cost, 0);
   const totalIn = steps.reduce((a, b) => a + b.tokensIn, 0);
   const totalOut = steps.reduce((a, b) => a + b.tokensOut, 0);
+  const totalRetries = steps.reduce((a, b) => a + b.retries, 0);
 
   if (!transcript) {
     return (
@@ -35,7 +36,7 @@ export function PipelineRunPage() {
         title={`Pipeline run · ${transcript.id}`}
         subtitle={
           <>
-            {transcript.name} · 5-step workflow · <Money value={total} /> total
+            {transcript.name} · 5-step workflow · <Money value={total} /> estimated total
           </>
         }
         right={
@@ -51,21 +52,28 @@ export function PipelineRunPage() {
       />
 
       <div className="kpis">
-        <KPI label="Total run cost" value={"$" + total.toFixed(4)} sub="all 5 steps" />
-        <KPI label="Latency · end-to-end" value="24.9s" sub="step-2 dominant" />
+        <KPI
+          label="Estimated run cost"
+          value={"$" + total.toFixed(4)}
+          sub={steps.length ? "from recorded LLM usage" : "No usage recorded yet"}
+        />
+        <KPI label="Latency · end-to-end" value="Not tracked" sub="usage view only" />
         <KPI
           label="Tokens · in / out"
           value={`${(totalIn / 1000).toFixed(1)}K / ${(totalOut / 1000).toFixed(1)}K`}
         />
         <KPI
           label="Retries · this run"
-          value={steps.reduce((a, b) => a + b.retries, 0)}
-          sub="step-2 auto-retried 1x"
+          value={totalRetries}
+          sub={steps.length ? "recorded retry count" : "No usage recorded yet"}
           accent="var(--amber)"
         />
       </div>
 
       <Section eyebrow="5-step workflow" title="Agent run timeline">
+        {steps.length === 0 && (
+          <div className="empty">No usage recorded yet for this pipeline run.</div>
+        )}
         <ol className="pipe">
           {steps.map((s, i) => (
             <li key={s.step} className={"pipe__step pipe__step--" + s.status}>
@@ -86,15 +94,14 @@ export function PipelineRunPage() {
                   <div><dt>Latency</dt><dd className="mono">{s.latency}</dd></div>
                   <div><dt>Tokens in</dt><dd className="mono">{s.tokensIn.toLocaleString()}</dd></div>
                   <div><dt>Tokens out</dt><dd className="mono">{s.tokensOut.toLocaleString()}</dd></div>
-                  <div><dt>Cost</dt><dd><Money value={s.cost} /></dd></div>
+                  <div><dt>Estimated cost</dt><dd><Money value={s.cost} /></dd></div>
                 </dl>
                 {s.step === 2 && s.retries > 0 && (
                   <div className="callout callout--soft">
                     <span className="dot dot--amber" />
                     <div>
-                      <b>Retry:</b> initial response failed schema validation on the `evidence`
-                      field; auto-retried with stricter system prompt and recovered. No
-                      transcript text exposed in this view.
+                      <b>Retry:</b> this step has persisted retry attempts in
+                      llm_usage_events. No transcript text is exposed in this view.
                     </div>
                   </div>
                 )}
@@ -119,7 +126,10 @@ export function PipelineRunPage() {
         </ol>
       </Section>
 
-      <Section eyebrow="Cost composition" title="Step-by-step share of run">
+      <Section eyebrow="Estimated API cost composition" title="Step-by-step share of run">
+        {steps.length === 0 && (
+          <div className="empty">No usage recorded yet for this pipeline run.</div>
+        )}
         {steps.map((s) => (
           <BarRow
             key={s.step}
@@ -129,7 +139,7 @@ export function PipelineRunPage() {
               </span>
             }
             value={Number(s.cost.toFixed(4))}
-            max={Math.max(...steps.map((x) => x.cost))}
+            max={Math.max(...steps.map((x) => x.cost), 0.0001)}
             color={s.step === 2 ? "var(--ink)" : "var(--slate)"}
           />
         ))}

@@ -70,7 +70,7 @@ export function LibraryPage() {
           <label className="lbl">Sort</label>
           <select className="select" value={sort} onChange={(e) => setSort(e.target.value)}>
             <option value="date">most recent</option>
-            <option value="cost">cost (high→low)</option>
+            <option value="cost">estimated cost (high→low)</option>
             <option value="drivers">most drivers</option>
           </select>
         </div>
@@ -85,7 +85,7 @@ export function LibraryPage() {
               <th>Review</th>
               <th className="num">Drivers</th>
               <th className="num">Blockers</th>
-              <th className="num">Cost</th>
+              <th className="num">Estimated LLM cost</th>
               <th>Export</th>
               <th></th>
             </tr>
@@ -106,7 +106,10 @@ export function LibraryPage() {
                 <td><ReviewPill state={t.reviewState} /></td>
                 <td className="num mono">{t.drivers || "—"}</td>
                 <td className="num mono">{t.blockers || "—"}</td>
-                <td className="num"><Money value={t.cost} /></td>
+                <td className="num">
+                  <Money value={t.cost} />
+                  {t.calls === 0 && <div className="small slate">No usage recorded yet</div>}
+                </td>
                 <td>
                   {t.exportReady ? (
                     <span className="tag tag--ink">ready</span>

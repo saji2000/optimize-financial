@@ -122,12 +122,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const stepsForTranscript = useCallback(
     (transcriptId: string | undefined) => {
+      if (source === "mock") return pipelineStepsForRun(undefined, mockPipelineSteps);
       const run = [...pipelineRuns]
         .sort((a, b) => b.created_at.localeCompare(a.created_at))
         .find((item) => item.transcript_id === transcriptId);
-      return pipelineStepsForRun(run, mockPipelineSteps);
+      return pipelineStepsForRun(run);
     },
-    [pipelineRuns],
+    [pipelineRuns, source],
   );
 
   return (

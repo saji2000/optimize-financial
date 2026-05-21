@@ -14,14 +14,14 @@ export function DashboardPage() {
   const failedTranscript = transcripts.find((t) => t.status === "failed");
 
   const trend = useMemo(() => {
-    const out: number[] = [];
-    let v = 0.18;
-    for (let i = 0; i < 14; i++) {
-      v = Math.max(0.1, v + (Math.random() - 0.45) * 0.12);
-      out.push(v);
-    }
-    return out;
-  }, []);
+    const points = transcripts
+      .slice()
+      .reverse()
+      .map((t) => t.cost);
+    return points.length ? points : [0];
+  }, [transcripts]);
+  const peak = Math.max(...trend);
+  const low = Math.min(...trend);
 
   function openTranscript(id: string) {
     navigate(`/transcripts/${id}`);
@@ -58,7 +58,7 @@ export function DashboardPage() {
           accent="var(--rust)"
         />
         <KPI
-          label="Est. cost (all time)"
+          label="Estimated LLM cost"
           value={"$" + cost.toFixed(2)}
           sub={`avg $${(cost / Math.max(total, 1)).toFixed(3)}/transcript`}
         />
@@ -67,8 +67,8 @@ export function DashboardPage() {
       <div className="grid-2">
         <Section
           eyebrow="Pipeline health - 14 days"
-          title="Cost per transcript"
-          right={<span className="mono small">peak $0.51 - low $0.14</span>}
+          title="Estimated API cost per transcript"
+          right={<span className="mono small">peak ${peak.toFixed(4)} - low ${low.toFixed(4)}</span>}
         >
           <div className="trendwrap">
             <Sparkline points={trend} w={620} h={120} />
@@ -79,7 +79,7 @@ export function DashboardPage() {
             </div>
           </div>
           <div className="legend">
-            <span className="dot dot--ink" /> daily mean spend
+            <span className="dot dot--ink" /> daily mean estimated spend
             <span className="legend__sep">-</span>
             <span className="mono">avg ${(cost / Math.max(total, 1)).toFixed(3)}</span>
           </div>
@@ -131,7 +131,7 @@ export function DashboardPage() {
                 <th>Transcript</th>
                 <th>Drivers</th>
                 <th>Blockers</th>
-                <th>Cost</th>
+                <th>Estimated cost</th>
                 <th></th>
               </tr>
             </thead>
@@ -148,6 +148,7 @@ export function DashboardPage() {
                     <td className="mono">{t.blockers}</td>
                     <td>
                       <Money value={t.cost} />
+                      {t.calls === 0 && <div className="small slate">No usage recorded yet</div>}
                     </td>
                     <td>
                       <button className="link" onClick={() => openTranscript(t.id)}>

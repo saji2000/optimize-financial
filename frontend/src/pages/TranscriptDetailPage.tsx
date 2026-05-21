@@ -58,6 +58,7 @@ export function TranscriptDetailPage() {
 
   const drivers = signals.filter((s) => s.type === "driver").sort((a, b) => a.rank - b.rank);
   const blockers = signals.filter((s) => s.type === "blocker").sort((a, b) => a.rank - b.rank);
+  const hasUsage = transcript ? transcript.calls > 0 : false;
 
   if (!transcript) {
     return (
@@ -109,8 +110,9 @@ export function TranscriptDetailPage() {
           </span>
         </div>
         <div className="dmeta">
-          <span className="eyebrow">Cost</span>
+          <span className="eyebrow">Estimated LLM cost</span>
           <Money value={transcript.cost} big />
+          {!hasUsage && <span className="small slate">No usage recorded yet</span>}
         </div>
         <div className="dmeta">
           <span className="eyebrow">Tokens in / out</span>
@@ -214,7 +216,8 @@ export function TranscriptDetailPage() {
           </div>
 
           <div className="cost-summary">
-            <div className="eyebrow">Cost summary · this transcript</div>
+            <div className="eyebrow">Estimated API cost · this transcript</div>
+            {!hasUsage && <div className="small slate">No usage recorded yet</div>}
             <div className="cost-summary__grid">
               <div>
                 <span className="lbl">Total</span>
@@ -234,7 +237,7 @@ export function TranscriptDetailPage() {
               </div>
             </div>
             <button className="link" onClick={() => navigate(`/pipeline/${transcript.id}`)}>
-              see cost by pipeline step →
+              see estimated cost by pipeline step →
             </button>
           </div>
         </div>
