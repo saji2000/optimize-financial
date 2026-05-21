@@ -4,6 +4,7 @@ import {
   TranscriptDetailRead,
   TranscriptSummaryRead,
   TranscriptTurnRead,
+  LLMUsageStepRead,
 } from "./types";
 import {
   PipelineStep,
@@ -26,11 +27,11 @@ export function mapTranscriptSummary(dto: TranscriptSummaryRead): Transcript {
     status,
     drivers: dto.driver_count,
     blockers: dto.blocker_count,
-    cost: enrichment.cost ?? 0,
-    tokensIn: enrichment.tokensIn ?? 0,
-    tokensOut: enrichment.tokensOut ?? 0,
-    calls: enrichment.calls ?? 0,
-    retries: enrichment.retries ?? 0,
+    cost: dto.usage.estimated_total_cost_usd,
+    tokensIn: dto.usage.input_tokens,
+    tokensOut: dto.usage.output_tokens,
+    calls: dto.usage.calls,
+    retries: dto.usage.retry_count,
     reviewState: enrichment.reviewState,
     exportReady: status === "completed" && signalCount > 0,
     duration: enrichment.duration,
@@ -74,9 +75,12 @@ export function mapTurn(dto: TranscriptTurnRead): TranscriptTurn {
 
 export function pipelineStepsForRun(
   run: PipelineRunRead | undefined,
-  fallbackSteps: PipelineStep[],
+  fallbackSteps: PipelineStep[] = [],
 ): PipelineStep[] {
   if (!run) return fallbackSteps;
+  if (run.usage_by_step.length > 0) {
+    return run.usage_by_step.map(mapUsageStep);
+  }
   const failed = run.status === "failed";
   return fallbackSteps.map((step) => ({
     ...step,
@@ -98,4 +102,42 @@ function repDisplayName(dto: TranscriptTurnRead) {
 
 function dateOnly(value: string) {
   return value.slice(0, 10);
+}
+
+function mapUsageStep(dto: LLMUsageStepRead, index: number): PipelineStep {
+  const stepNumber = stepNumberFor(dto.pipeline_step, index);
+  return {
+    step: stepNumber,
+    name: stepNameFor(dto.pipeline_step, dto.agent_name),
+    status: "ok",
+    model: dto.models.length > 0 ? dto.models.join(", ") : "No model recorded",
+    prompt: dto.prompt_versions.length > 0 ? dto.prompt_versions.join(", ") : "No prompt recorded",
+    retries: dto.retry_count,
+    latency: "Not tracked",
+    tokensIn: dto.input_tokens,
+    tokensOut: dto.output_tokens,
+    cost: dto.estimated_total_cost_usd,
+  };
+}
+
+function stepNumberFor(pipelineStep: string, index: number) {
+  const order: Record<string, number> = {
+    transcript_preparation: 1,
+    segment_signal_extraction: 2,
+    consolidation_ranking: 3,
+    evidence_validation: 4,
+    final_formatting: 5,
+  };
+  return order[pipelineStep] || index + 1;
+}
+
+function stepNameFor(pipelineStep: string, agentName: string) {
+  const names: Record<string, string> = {
+    transcript_preparation: "Transcript preparation",
+    segment_signal_extraction: "Segment signal extraction",
+    consolidation_ranking: "Consolidation & ranking",
+    evidence_validation: "Evidence validation",
+    final_formatting: "Final formatting (Agent 5)",
+  };
+  return names[pipelineStep] || agentName || pipelineStep;
 }

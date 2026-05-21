@@ -9,6 +9,7 @@ export interface TranscriptSummaryRead {
   created_at: string;
   driver_count: number;
   blocker_count: number;
+  usage: LLMUsageSummaryRead;
 }
 
 export interface TranscriptRead {
@@ -49,6 +50,29 @@ export interface TranscriptDetailRead extends TranscriptSummaryRead {
   final_signals: SignalRead[];
 }
 
+export interface LLMUsageSummaryRead {
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  estimated_total_cost_usd: number;
+  retry_count: number;
+  latest_pricing_version: string | null;
+}
+
+export interface LLMUsageStepRead {
+  pipeline_step: string;
+  agent_name: string;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  estimated_total_cost_usd: number;
+  retry_count: number;
+  models: string[];
+  prompt_versions: string[];
+}
+
 export interface PipelineRunRead {
   id: string;
   transcript_id: string;
@@ -58,4 +82,6 @@ export interface PipelineRunRead {
   created_at: string;
   error_type: string | null;
   error_message: string | null;
+  usage: LLMUsageSummaryRead;
+  usage_by_step: LLMUsageStepRead[];
 }

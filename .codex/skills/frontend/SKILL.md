@@ -18,7 +18,8 @@ Confidentiality rules apply: do not render raw transcript text outside the trans
 The app now uses a frontend-first hybrid data layer:
 
 - Backend remains the factual source for uploaded transcripts, prepared turns, final Agent-5 signals, and pipeline status.
-- Local demo enrichment preserves polished advisor/client/duration/review/cost metadata for presentation.
+- Local demo enrichment preserves polished advisor/client/duration/review metadata for presentation.
+- API-backed transcript and pipeline cost/token/call/retry values come from backend `llm_usage_events` aggregates, not demo enrichment.
 - No backend schema changes were introduced for enrichment/review metadata.
 
 Default local mode:
@@ -52,6 +53,7 @@ Stack:
 - `src/pages/TranscriptDetailPage.tsx`: prepared turns plus transcript-scoped final signals.
 - `src/pages/SignalReviewPage.tsx`: cross-transcript signal review.
 - `src/pages/ExportsPage.tsx`: public final-schema preview.
+- `src/pages/AnalyticsPage.tsx`: estimated API cost and token usage from backend usage fields when available.
 
 ## Data Flow
 
@@ -62,6 +64,12 @@ Stack:
 - `GET /transcripts/{id}/turns`
 - `GET /signals`
 - `GET /pipeline-runs`
+
+Usage fields:
+
+- `GET /transcripts` and `GET /transcripts/{id}` include `usage`.
+- `GET /pipeline-runs` and `GET /pipeline-runs/{id}` include `usage` and `usage_by_step`.
+- `usage.estimated_total_cost_usd` is an estimated API/LLM cost calculated by the backend pricing table from recorded OpenAI token counts; it is not invoice truth.
 
 `UploadPage` posts `.txt` files to:
 
@@ -81,11 +89,13 @@ Review status is local-only in this pass. Do not imply backend review persistenc
 Backend to frontend:
 
 - `TranscriptSummaryRead` / `TranscriptDetailRead` -> `Transcript`.
+- `Transcript.cost`, `tokensIn`, `tokensOut`, `calls`, and `retries` come from `dto.usage` in API/hybrid backend mode.
 - `SignalRead.transcript_id` -> `Signal.transcriptId`.
 - `SignalRead.item_type` -> `Signal.type`.
 - `SignalRead.advisor_quote` -> `Signal.quote`.
 - `SignalRead.evidence_strength` -> `Signal.evidence`.
 - Backend transcript turns -> `TranscriptTurn`.
+- Pipeline step rows for `/pipeline/:id` come from `PipelineRunRead.usage_by_step` when available.
 
 Turn display:
 
@@ -96,8 +106,17 @@ Turn display:
 Fallback metadata:
 
 - Known/demo transcript IDs use `demoEnrichment`.
-- Unknown completed transcripts get deterministic fallback values such as `Advisor TBD`, `Prospective firm`, `pending`, and synthetic duration/cost values.
+- Unknown completed transcripts get deterministic fallback values such as `Advisor TBD`, `Prospective firm`, `pending`, and synthetic duration values.
+- Do not use `demoEnrichment` for cost, token, call, or retry values when backend DTO usage is available.
+- Mock mode and hybrid backend-unreachable fallback may continue to use demo cost/token values from `mockData`.
+- When backend usage has no events, show zero cost/tokens with neutral copy such as `No usage recorded yet`, not synthetic fallback numbers.
 - Export-ready is true only when a transcript is completed and has final signals.
+
+Cost and usage copy:
+
+- Label backend-derived values as `Estimated LLM cost` or `Estimated API cost`.
+- Avoid wording such as billed spend, invoice cost, or exact billing total.
+- Explain or imply that estimates are from recorded LLM usage events and backend pricing, not OpenAI invoice reconciliation.
 
 Transcript highlighting:
 
@@ -111,9 +130,9 @@ Transcript highlighting:
 - `/transcripts`: searchable/sortable transcript library.
 - `/transcripts/:id`: transcript turns and transcript-scoped final signals.
 - `/review`: cross-transcript signal review; "open in context" uses `Signal.transcriptId`.
-- `/pipeline` and `/pipeline/:id`: pipeline/cost timeline using backend status plus demo step cost placeholders.
+- `/pipeline` and `/pipeline/:id`: pipeline run timeline using `usage_by_step` for cost/tokens/models/prompts in API-backed mode.
 - `/upload`: upload `.txt` files and poll backend status in `api`/`hybrid`.
-- `/analytics`: hybrid cost/usage presentation until backend aggregation exists.
+- `/analytics`: estimated cost/token usage presentation from backend usage fields when API data is loaded.
 - `/exports`: public final-schema preview only.
 
 ## Design System
@@ -140,6 +159,14 @@ If the frontend loads but shows mock/empty data:
 4. Check browser network/CORS errors.
 5. Confirm `VITE_API_BASE` points to the running backend.
 
+If API-backed rows show zero cost/tokens:
+
+1. Check `GET /transcripts` and confirm each row has `usage.calls > 0`.
+2. If usage is zero, inspect Postgres and confirm `llm_usage_events.transcript_id` matches the displayed `transcripts.id`.
+3. For pipeline step costs, confirm `pipeline_runs` exist and `llm_usage_events.pipeline_run_id` matches the run id.
+4. Remember artifact import hydrates transcripts, turns, and final signals, but not LLM usage events.
+5. Local smoke scripts record usage only when run with `--record-usage`; the API upload/worker path is the best way to create matching transcript and run usage.
+
 If the backend is empty, hybrid mode may show a quiet UI or mock fallback. Populate local data with:
 
 ```powershell
@@ -161,6 +188,7 @@ Export preview must preserve the public final schema only:
 - `rationale`
 
 Do not include candidate/ranked/rejected metadata, prompt names, source chunks, validation notes, token usage, or raw transcript text in exports.
+Export pages may show estimated aggregate API cost as UI metadata, but exported files must preserve the public final signal schema only.
 
 ## Commands
 

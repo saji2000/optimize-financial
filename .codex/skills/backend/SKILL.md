@@ -16,6 +16,7 @@ Backend V1 stores and serves only real pipeline data:
 - Final Agent-5 public signals.
 - Pipeline run status and sanitized failures.
 - Existing `llm_usage_events` for LLM call usage, cost, latency, retry, and failure metadata.
+- Aggregated LLM usage read models for transcripts and pipeline runs.
 
 Do not add advisor/client metadata, reviewer workflows, approval state, export readiness, dashboard cosmetics, or rich frontend-only fields unless the user explicitly asks for a later product scope.
 
@@ -90,11 +91,12 @@ Implemented V1 routes:
   - Returns `{ id, title, status }`.
 
 - `GET /transcripts`
-  - Returns `id`, `title`, `status`, `created_at`, `driver_count`, and `blocker_count`.
+  - Returns `id`, `title`, `status`, `created_at`, `driver_count`, `blocker_count`, and `usage`.
   - Signal counts come from persisted `final_signals`.
+  - `usage` is aggregated from `llm_usage_events` by matching `llm_usage_events.transcript_id` to `transcripts.id`.
 
 - `GET /transcripts/{id}`
-  - Returns transcript summary plus `updated_at`, sanitized failure fields, ordered prepared turns, and final signals.
+  - Returns transcript summary plus `usage`, `updated_at`, sanitized failure fields, ordered prepared turns, and final signals.
 
 - `GET /transcripts/{id}/turns`
   - Returns ordered prepared transcript turns for the transcript viewer.
@@ -105,16 +107,24 @@ Implemented V1 routes:
   - Response shape is public final schema plus internal generated `id`.
 
 - `GET /pipeline-runs`
-  - Returns run id, transcript id, status, timestamps, and sanitized failure fields.
+  - Returns run id, transcript id, status, timestamps, sanitized failure fields, `usage`, and `usage_by_step`.
+  - `usage` and `usage_by_step` are aggregated from `llm_usage_events` by matching `llm_usage_events.pipeline_run_id` to `pipeline_runs.id`.
 
 - `GET /pipeline-runs/{id}`
-  - Returns one run or 404.
+  - Returns one run plus `usage` and `usage_by_step`, or 404.
 
 Review and export routes are still placeholders. Keep review/export/dashboard-specific backend behavior out of V1 unless the user asks for it.
 
 ## Public Schemas
 
 Current response schemas live under `backend/app/domain/`.
+
+LLM usage response schemas live in `backend/app/domain/usage_schema.py`:
+
+- `LLMUsageSummaryRead`: `calls`, `input_tokens`, `output_tokens`, `total_tokens`, `estimated_total_cost_usd`, `retry_count`, `latest_pricing_version`.
+- `LLMUsageStepRead`: `pipeline_step`, `agent_name`, `calls`, `input_tokens`, `output_tokens`, `total_tokens`, `estimated_total_cost_usd`, `retry_count`, `models`, `prompt_versions`.
+
+Usage totals are estimated API costs calculated from recorded OpenAI token counts and the backend pricing table. They are not invoice or billing reconciliation data. Zero-event summaries should return zero numeric fields and `latest_pricing_version: null`.
 
 Important public signal shape is `SignalRead` in `backend/app/domain/signal_schema.py`:
 
@@ -162,6 +172,31 @@ The worker must not log raw transcript text or full exception messages that may 
 - `final_signals`
 
 `run_signals(...)` remains available for compatibility and returns only final signals.
+
+## LLM Usage Reads
+
+Usage write behavior:
+
+- Agents use `OpenAIClient(usage_recorder=LLMUsageService())` by default.
+- `PipelineOrchestrator(record_usage=True)` is the default and records usage.
+- The worker path calls `PipelineOrchestrator(pipeline_run_id=run_id)`, so worker-generated events should include both `transcript_id` and `pipeline_run_id`.
+- Local smoke scripts disable usage by default; pass `--record-usage` only when Postgres is available and migrations have run.
+
+Usage read behavior:
+
+- Aggregate usage in service/repository-backed code, not route handlers.
+- Transcript usage matches `llm_usage_events.transcript_id` to `transcripts.id`.
+- Pipeline-run usage matches `llm_usage_events.pipeline_run_id` to `pipeline_runs.id`.
+- Include all persisted usage events. Failed zero-token events count toward `calls` and `retry_count` but add zero tokens and zero cost.
+- Do not expose raw transcript text, prompt payloads, model outputs, or request bodies in usage responses.
+
+Troubleshooting zero cost:
+
+- If `GET /transcripts` shows `usage.calls: 0`, first check whether `llm_usage_events.transcript_id` values actually match the displayed `transcripts.id` values.
+- Artifact import creates transcript/turn/signal rows from local artifacts but does not import LLM usage events.
+- Running a smoke script without `--record-usage` will produce outputs/artifacts but no usage rows.
+- Running a smoke script with a different `--transcript-id` can create usage rows that do not attach to the displayed transcript rows.
+- `/pipeline/:id` style step costs require `pipeline_runs` plus `llm_usage_events.pipeline_run_id`; the API upload/worker path is the preferred way to create matching run-linked usage.
 
 ## Persistence Behavior
 
@@ -265,6 +300,7 @@ Key V1 tests:
 
 Existing agent and usage tests remain important:
 
+- `backend/tests/test_llm_usage_read_models.py`
 - `backend/tests/test_pipeline_orchestrator.py`
 - `backend/tests/test_llm_usage_tracking.py`
 - `backend/tests/test_signal_extraction_agent.py`
