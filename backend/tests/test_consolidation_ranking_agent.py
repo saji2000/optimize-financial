@@ -95,8 +95,18 @@ def test_model_defaults_to_settings_openai_model() -> None:
     assert settings.openai_model == "gpt-5.5"
     assert llm_client.calls[0]["model"] == settings.openai_model
     assert llm_client.calls[0]["endpoint"] == "responses"
-    assert llm_client.calls[0]["service_tier"] == "standard"
+    assert llm_client.calls[0]["service_tier"] == "flex"
     assert llm_client.calls[0]["max_output_tokens"] == 6000
+
+
+def test_constructor_can_override_service_tier_to_standard() -> None:
+    llm_client = FakeLLMClient([ConsolidationRankingResult()])
+
+    ConsolidationRankingAgent(llm_client=llm_client, service_tier="standard").run(
+        [_candidate()]
+    )
+
+    assert llm_client.calls[0]["service_tier"] == "standard"
 
 
 def test_constructor_can_override_model() -> None:

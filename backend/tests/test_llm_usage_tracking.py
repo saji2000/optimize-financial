@@ -515,6 +515,8 @@ def test_consolidation_call_records_cross_segment_usage_context() -> None:
     ).run(candidates)
 
     assert len(ranked) == 1
+    request = client.sdk_client.responses.requests[0]
+    assert request["service_tier"] == "flex"
     event = recorder.events[0]
     assert event.agent_name == "ConsolidationRankingAgent"
     assert event.pipeline_step == "consolidation_ranking"

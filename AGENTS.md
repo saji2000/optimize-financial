@@ -394,7 +394,7 @@ Current implementation:
 - If the primary model exhausts retries on a transient OpenAI failure such as 429, timeout, connection error, or 5xx, retries once through the configured fallback model before failing the step. Centralized retries wait 60 seconds before the second attempt and 120 seconds before the third attempt.
 - Defaults to `settings.openai_model`, currently `OPENAI_MODEL=gpt-5.5`, through `CONSOLIDATION_RANKING_MODEL`.
 - Uses `settings.openai_model_mid`, currently `OPENAI_MODEL_MID=gpt-5.4`, through `CONSOLIDATION_RANKING_FALLBACK_MODEL` as the transient-failure fallback.
-- Uses repo-facing `CONSOLIDATION_RANKING_SERVICE_TIER = "standard"`, which `OpenAIClient` sends to OpenAI as API `service_tier="default"`.
+- Uses repo-facing `CONSOLIDATION_RANKING_SERVICE_TIER = DEFAULT_SERVICE_TIER`, currently `flex`; pass repo-facing `service_tier="standard"` only as an explicit constructor override for a latency-sensitive run.
 - Uses `CONSOLIDATION_RANKING_ENDPOINT = "responses"` because repeated `gpt-5.5` failures were observed on the previous Chat Completions structured parsing path, while `gpt-5.5` completed successfully through Responses.
 - Uses `CONSOLIDATION_RANKING_MAX_OUTPUT_TOKENS = 6000`; the previous shared 2000-token default could truncate Agent 3's structured JSON on larger candidate sets.
 - Uses prompt `backend/app/prompts/consolidation_ranking_v1.md` and prompt version `consolidation_ranking_v1`.

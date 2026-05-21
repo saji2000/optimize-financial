@@ -49,7 +49,7 @@ PipelineOrchestrator
         │                                       Chat Completions structured parsing
         │
         ├─► [3] ConsolidationRankingAgent      1 LLM call per transcript      gpt-5.5  (strong)
-        │                                       Responses API   tier=standard   fallback=gpt-5.4
+        │                                       Responses API   tier=flex       fallback=gpt-5.4
         │
         ├─► [4] EvidenceValidationAgent        1 LLM call per transcript      gpt-5.5  (strong)
         │                                       Responses API   tier=flex       fallback=gpt-5.4
@@ -80,7 +80,7 @@ React review UI    drivers/blockers + advisor quote + timestamp + evidence_stren
 |---|---|---|---|---|---|
 | 1. Transcript prep | — | — | — | — | Deterministic parsing; no model judgment needed |
 | 2. Extraction | `gpt-5.4` (mid) | Chat Completions | flex | none | Per-chunk, independent, cheap; mid model has enough judgment |
-| 3. Ranking | `gpt-5.5` (strong) | Responses | **standard** | `gpt-5.4` | Cross-segment prioritization needs reasoning; latency matters for UI |
+| 3. Ranking | `gpt-5.5` (strong) | Responses | flex | `gpt-5.4` | Cross-segment prioritization needs strong reasoning; flex is the default cost guardrail |
 | 4. Validation | `gpt-5.5` (strong) | Responses | flex | `gpt-5.4` | False positives are the highest-risk failure; precision premium |
 | 5. Final format | `gpt-5.4` (mid) | Responses | flex | none | Only re-shapes validated output; must not invent |
 
@@ -139,7 +139,7 @@ Output is `{validated_signals, rejected_signals}`. Code-side guardrails require 
 - **Worker isolation** — API routes only enqueue Celery tasks; the worker pool scales independently of the API.
 - **Tiered models** — Agent 2 / Agent 5 already run on the cheaper mid-tier model; only Agents 3 and 4 use the strong reasoning model.
 - **Bounded retries with fallback** — the centralized client retries transient errors (429 / 5xx / timeout / connection) with **60 s, then 120 s** backoff (3 attempts). After primary retries exhaust on transient errors, Agents 3 and 4 try the mid-tier fallback model. Never retries/fallbacks on `BadRequestError` or `ValidationError` — those are configuration/schema bugs to fix.
-- **Service tier** — repo-facing `flex` is the default (cheaper, higher tolerated latency); only Agent 3 sets `standard` (mapped to API `default`).
+- **Service tier** — repo-facing `flex` is the default (cheaper, higher tolerated latency); use `standard` only as an explicit override for a latency-sensitive run.
 - **Audit-friendly persistence** — candidates, ranked, validated, rejected, and final signals are all persisted, so re-running a step or re-validating with a new prompt version doesn't require re-running the whole pipeline.
 
 ---
@@ -221,7 +221,7 @@ Used for transcript-level reasoning because `gpt-5.5` is stable on Responses but
 # backend/app/llm/openai_client.py  (excerpt)
 request = {
     "model": "gpt-5.5",                                  # OPENAI_MODEL (strong)
-    "service_tier": "default",                           # repo "standard" → API "default"
+    "service_tier": "flex",                              # cost-optimized default
     "instructions": consolidation_ranking_v1_prompt,
     "input": json.dumps(ranking_input_payload, ensure_ascii=False, separators=(",", ":")),
     "text_format": ConsolidationRankingResult,           # strict Pydantic schema
@@ -234,7 +234,7 @@ parsed: ConsolidationRankingResult = response.output_parsed
 ### 3.4 Cross-cutting parameters (every call)
 
 - **Temperature**: pulled from config (`settings.openai_temperature`); only sent when not `None` so reasoning models that reject `temperature` aren't broken.
-- **Service tier**: repo-facing `flex` by default, repo-facing `standard` only for latency-sensitive Agent 3. The client maps repo `standard` → API `default` (the API accepts `auto | default | flex | priority`, not literal `standard`).
+- **Service tier**: repo-facing `flex` by default; pass repo-facing `standard` only for an explicitly latency-sensitive call. The client maps repo `standard` → API `default` (the API accepts `auto | default | flex | priority`, not literal `standard`).
 - **Retries**: 3 attempts, initial 60 s backoff doubling each retry (60 s, 120 s). Retries **only** transient errors (429, 5xx, `APITimeoutError`, `APIConnectionError`, `InternalServerError`, `RateLimitError`). Never retries `BadRequestError` or Pydantic `ValidationError`.
 - **Fallback**: Agents 3 & 4 fall back to the mid-tier model **only** after primary retries are exhausted on a transient error. Same prompt / payload / schema / endpoint / tier on the fallback call so usage tracking stays comparable.
 - **Usage**: every attempt persists a row in `llm_usage_events` — model, prompt_version, input/output/total tokens, latency, retry count, status, error type, estimated cost, and pricing version.
@@ -320,7 +320,7 @@ Order-of-magnitude per 60-minute transcript (real numbers depend on chunking and
 
 Cost guardrails:
 
-- `service_tier="flex"` by default — the cheaper tier on every call except Agent 3.
+- `service_tier="flex"` by default — the cheaper tier on every default agent call.
 - Mid-tier model on the two cheapest-to-run steps (extraction and final formatting).
 - Empty-input short-circuit on Agents 3 / 4 / 5 — no LLM call when there's nothing to process.
 - Pricing version stored with every usage event (`backend/app/llm/pricing.py`), so historical costs survive future price changes.

@@ -4,6 +4,7 @@ from typing import Any
 from app.core.config import settings
 from app.domain.enums import SignalType
 from app.llm.openai_client import (
+    DEFAULT_SERVICE_TIER,
     LLMCallContext,
     OpenAIEndpoint,
     OpenAIClient,
@@ -18,7 +19,7 @@ from app.services.llm_usage_service import LLMUsageService
 
 CONSOLIDATION_RANKING_MODEL = settings.openai_model
 CONSOLIDATION_RANKING_FALLBACK_MODEL = settings.openai_model_mid
-CONSOLIDATION_RANKING_SERVICE_TIER: ServiceTier = "standard"
+CONSOLIDATION_RANKING_SERVICE_TIER: ServiceTier = DEFAULT_SERVICE_TIER
 CONSOLIDATION_RANKING_ENDPOINT: OpenAIEndpoint = "responses"
 CONSOLIDATION_RANKING_MAX_OUTPUT_TOKENS = 6000
 CONSOLIDATION_RANKING_PROMPT = "consolidation_ranking_v1.md"
