@@ -1,36 +1,94 @@
 import { useState, DragEvent, ChangeEvent } from "react";
+import { useNavigate } from "react-router-dom";
+import { DATA_MODE, getTranscript, uploadTranscript } from "../api/client";
 import { Section, StatusPill, TopBar } from "../components/primitives";
+import { useData } from "../data/DataProvider";
 
 interface UploadFile {
   id: string;
   name: string;
   size: number;
-  status: "queued" | "running" | "completed";
+  status: "queued" | "running" | "completed" | "failed";
   progress: number;
+  error?: string;
 }
 
 export function UploadPage() {
   const [files, setFiles] = useState<UploadFile[]>([]);
   const [drag, setDrag] = useState(false);
+  const navigate = useNavigate();
+  const { refresh } = useData();
 
   function add(list: FileList) {
-    const next: UploadFile[] = Array.from(list).map((f, i) => ({
-      id: "TR-" + (2042 + files.length + i),
-      name: f.name.replace(/\.txt$/i, ""),
-      size: f.size,
-      status: "queued",
-      progress: 0,
-    }));
-    setFiles((arr) => [...arr, ...next]);
-    next.forEach((file) => {
-      setTimeout(() => bump(file.id, "running", 10), 600);
-      [22, 38, 55, 68, 80, 92, 100].forEach((p, idx) => {
-        setTimeout(
-          () => bump(file.id, p === 100 ? "completed" : "running", p),
-          900 + idx * 500,
-        );
-      });
+    Array.from(list).forEach((file, i) => {
+      const localId = "upload-" + Date.now() + "-" + i;
+      const row: UploadFile = {
+        id: localId,
+        name: file.name.replace(/\.txt$/i, ""),
+        size: file.size,
+        status: "queued",
+        progress: 0,
+      };
+      setFiles((arr) => [...arr, row]);
+      if (DATA_MODE === "mock") {
+        simulateUpload(localId);
+      } else {
+        void sendToBackend(localId, file);
+      }
     });
+  }
+
+  function simulateUpload(id: string) {
+    setTimeout(() => bump(id, "running", 10), 600);
+    [22, 38, 55, 68, 80, 92, 100].forEach((p, idx) => {
+      setTimeout(
+        () => bump(id, p === 100 ? "completed" : "running", p),
+        900 + idx * 500,
+      );
+    });
+  }
+
+  async function sendToBackend(localId: string, file: File) {
+    try {
+      const created = await uploadTranscript(file);
+      setFiles((arr) =>
+        arr.map((item) =>
+          item.id === localId
+            ? { ...item, id: created.id, status: created.status === "queued" ? "queued" : "running", progress: 8 }
+            : item,
+        ),
+      );
+      await refresh();
+      pollTranscript(created.id);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Upload failed";
+      setFiles((arr) =>
+        arr.map((item) =>
+          item.id === localId ? { ...item, status: "failed", progress: 100, error: message } : item,
+        ),
+      );
+    }
+  }
+
+  function pollTranscript(id: string) {
+    let progress = 18;
+    const tick = async () => {
+      try {
+        const detail = await getTranscript(id);
+        const status = detail.status === "completed" || detail.status === "failed" ? detail.status : "running";
+        progress = status === "completed" || status === "failed" ? 100 : Math.min(progress + 12, 88);
+        bump(id, status, progress);
+        await refresh();
+        if (status !== "completed" && status !== "failed") {
+          setTimeout(tick, 2500);
+        }
+      } catch {
+        progress = Math.min(progress + 8, 72);
+        bump(id, "running", progress);
+        setTimeout(tick, 3000);
+      }
+    };
+    setTimeout(tick, 1200);
   }
 
   function bump(id: string, status: UploadFile["status"], progress: number) {
@@ -79,11 +137,11 @@ export function UploadPage() {
               />
               browse files
             </label>{" "}
-            · we kick off Agent 1 → Agent 5 automatically
+            - we kick off Agent 1 to Agent 5 automatically
           </div>
           <div className="drop__rules small slate">
-            <span>UTF-8 · plain text</span>
-            <span>≤ 2 MB / file</span>
+            <span>UTF-8 - plain text</span>
+            <span>2 MB / file recommended</span>
             <span>processed in order</span>
           </div>
         </div>
@@ -107,8 +165,9 @@ export function UploadPage() {
                     <div className="mono small slate">{f.id}</div>
                     <div>
                       {f.name}.txt{" "}
-                      <span className="slate small">· {(f.size / 1024).toFixed(1)} KB</span>
+                      <span className="slate small">- {(f.size / 1024).toFixed(1)} KB</span>
                     </div>
+                    {f.error && <div className="small slate">{f.error}</div>}
                   </td>
                   <td><StatusPill status={f.status} /></td>
                   <td>
@@ -118,7 +177,9 @@ export function UploadPage() {
                   </td>
                   <td>
                     {f.status === "completed" ? (
-                      <span className="link">open transcript →</span>
+                      <button className="link" onClick={() => navigate(`/transcripts/${f.id}`)}>
+                        open transcript -&gt;
+                      </button>
                     ) : (
                       <span className="slate small">{f.progress}%</span>
                     )}

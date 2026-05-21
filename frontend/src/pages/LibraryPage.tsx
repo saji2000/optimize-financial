@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Btn, Money, ReviewPill, StatusPill, TopBar } from "../components/primitives";
-import { transcripts } from "../data/mockData";
+import { useTranscripts } from "../data/DataProvider";
 
 export function LibraryPage() {
   const [q, setQ] = useState("");
@@ -9,6 +9,7 @@ export function LibraryPage() {
   const [review, setReview] = useState("all");
   const [sort, setSort] = useState("date");
   const navigate = useNavigate();
+  const transcripts = useTranscripts();
 
   const rows = useMemo(() => {
     let r = transcripts.slice();

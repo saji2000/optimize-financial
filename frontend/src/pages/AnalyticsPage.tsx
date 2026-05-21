@@ -1,8 +1,9 @@
 import { KPI, Money, Section, TopBar } from "../components/primitives";
-import { pipelineSteps, transcripts } from "../data/mockData";
+import { usePipelineSteps, useTranscripts } from "../data/DataProvider";
 
 export function AnalyticsPage() {
-  const stepTotals = pipelineSteps.map((s) => ({ ...s }));
+  const transcripts = useTranscripts();
+  const stepTotals = usePipelineSteps(transcripts[0]?.id).map((s) => ({ ...s }));
   const sumCost = stepTotals.reduce((a, b) => a + b.cost, 0);
   const sumIn = stepTotals.reduce((a, b) => a + b.tokensIn, 0);
   const sumOut = stepTotals.reduce((a, b) => a + b.tokensOut, 0);
@@ -25,7 +26,7 @@ export function AnalyticsPage() {
         />
         <KPI
           label="Avg per transcript"
-          value={"$" + (totalSpend / transcripts.length).toFixed(3)}
+          value={"$" + (totalSpend / Math.max(transcripts.length, 1)).toFixed(3)}
           sub="trending –12% MoM"
           accent="var(--moss)"
         />

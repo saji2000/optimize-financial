@@ -102,6 +102,37 @@ This repo is organized around that shape:
 - `infra/`: Docker, Nginx, PostgreSQL, and deployment support.
 - `data/`: Local sanitized samples only.
 
+## Local Full-Stack Deployment
+
+Local development uses Docker Compose for PostgreSQL, Redis, FastAPI, Celery, and the Vite frontend.
+
+Recommended startup from `D:\development\optimize-financial`:
+
+```powershell
+docker compose up -d --build postgres redis
+docker compose run --rm backend python -m alembic upgrade head
+docker compose build backend
+docker compose build frontend
+docker compose up -d backend worker frontend
+```
+
+Open:
+
+- Frontend: `http://localhost:5173`
+- Backend health: `http://localhost:8000/health`
+- Transcript API: `http://localhost:8000/transcripts`
+
+If Docker Desktop reports a BuildKit snapshot/export error such as `parent snapshot ... does not exist`, treat it as a Docker cache/export issue, not an application bug. Build `backend` and `frontend` separately as shown above instead of using one parallel `docker compose up -d --build backend worker frontend`.
+
+The backend database is empty until transcripts are uploaded or artifacts are imported. To hydrate local review data from existing human-review artifacts:
+
+```powershell
+cd D:\development\optimize-financial\backend
+python scripts\import_agent_artifacts.py --base-path ..\data\outputs\agents-outputs
+```
+
+Artifact import may read confidential transcript-derived files under `data/outputs/`; do not commit or print those contents.
+
 ## Backend Responsibilities
 
 The backend should remain layered:
@@ -117,6 +148,9 @@ The backend should remain layered:
 Important backend concerns:
 
 - Use FastAPI, Pydantic, SQLAlchemy, Alembic, Celery/Redis, PostgreSQL, and the OpenAI Python SDK.
+- FastAPI local CORS is enabled in `backend/app/main.py` for Vite dev origins on `localhost` and `127.0.0.1` ports `5170-5179`; do not broaden production origins without an explicit deployment/auth plan.
+- The Celery app is `app.workers.celery_app.celery_app`; Docker Compose must use `celery -A app.workers.celery_app.celery_app worker --loglevel=INFO`.
+- `backend/app/workers/celery_app.py` must include `app.workers.tasks` so the worker registers `run_transcript_pipeline`; a healthy worker log lists `. run_transcript_pipeline` under `[tasks]`.
 - Keep prompt files in `backend/app/prompts/` with explicit version suffixes such as `_v1.md`.
 - Keep model IDs, prompt versions, temperature, max output tokens, and schema versions in configuration or persisted pipeline metadata.
 - Every OpenAI-backed agent call should use repo-facing `service_tier: "flex"` by default to reduce cost. Only set repo-facing `service_tier: "standard"` explicitly on an individual agent call when that call needs standard latency. `backend/app/llm/openai_client.py` maps repo-facing `"standard"` to the OpenAI API value `"default"` because the API currently accepts `auto`, `default`, `flex`, and `priority`, not literal `standard`.
@@ -126,6 +160,7 @@ Important backend concerns:
 - Add application error monitoring, preferably Sentry or a Sentry-compatible service, for backend API errors, worker failures, unhandled exceptions, and frontend runtime errors.
 - Persist LLM usage records for every model call so cost and token usage can be audited and visualized later.
 - Never log full confidential transcripts in normal application logs.
+- In Python 3.11 repository classes, avoid runtime annotation crashes caused by methods shadowing built-ins. If a class defines `def list(...)`, add `from __future__ import annotations` before later annotations such as `list[TranscriptTurn]`, or rename the method.
 
 ## Human-Review Agent Output Artifacts
 
@@ -167,6 +202,16 @@ Serialize Pydantic outputs with `model_dump(mode="json")`. Lists serialize as JS
 ## Frontend Responsibilities
 
 The frontend should be a work-focused internal review tool, not a marketing site.
+
+Current frontend integration mode is hybrid:
+
+- `VITE_API_BASE` defaults to `http://localhost:8000`.
+- `VITE_DATA_MODE` defaults to `hybrid`.
+- `mock` mode keeps the original mock-only polished demo.
+- `api` mode uses backend-only data with minimal fallback display metadata.
+- `hybrid` mode uses backend transcripts, prepared turns, final signals, and pipeline status when available, then merges local demo enrichment for advisor/client/duration/review/cost polish.
+- Frontend `Signal` includes `transcriptId`; review "open in context" must navigate to that real transcript id.
+- Upload sends each `.txt` file as multipart form data to `POST /transcripts` and polls `GET /transcripts/{id}` for queued/running/completed/failed status.
 
 Expected views:
 

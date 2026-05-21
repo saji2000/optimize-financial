@@ -43,6 +43,11 @@ Main entry points:
 - V1 persistence: `backend/app/pipeline/persistence.py`
 - Artifact import: `backend/scripts/import_agent_artifacts.py`
 
+Local frontend integration:
+
+- `backend/app/main.py` includes `CORSMiddleware` for Vite dev origins matching `localhost` and `127.0.0.1` on ports `5170-5179`.
+- Keep CORS local and explicit. Do not broaden production origins without an actual deployment target and auth story.
+
 ## V1 Database
 
 Current V1 tables are introduced by `backend/migrations/versions/20260520_0002_add_v1_pipeline_tables.py`.
@@ -131,6 +136,13 @@ Do not use the old `signal_type` / `summary` / `evidence_quote` shape for final 
 
 ## Worker Flow
 
+Celery wiring details:
+
+- The Celery app is `app.workers.celery_app.celery_app`.
+- `backend/app/workers/celery_app.py` must include `include=["app.workers.tasks"]`; otherwise the worker can start with an empty task list and uploads will never execute.
+- Docker Compose runs the backend image from `/app/backend`, so the worker command must use `celery -A app.workers.celery_app.celery_app worker --loglevel=INFO`, not `backend.app...`.
+- A healthy worker log should list `. run_transcript_pipeline` under `[tasks]`.
+
 `backend/app/workers/tasks.py` implements the V1 worker path:
 
 1. Load transcript raw text from PostgreSQL.
@@ -182,6 +194,8 @@ Behavior:
 
 Artifact data may contain confidential transcript-derived content. Keep `data/outputs/` ignored.
 
+When the frontend/backend stack is running but the UI looks empty, check `GET /transcripts`. A fresh Postgres volume has no transcripts until uploads run or artifacts are imported. A recent local import from `data/outputs/agents-outputs` produced 5 completed transcript rows, 24 final signals, and 1510 prepared turns.
+
 ## Local Commands
 
 Run backend commands from `backend/` unless using `-c backend/alembic.ini`.
@@ -225,6 +239,19 @@ cd D:\development\optimize-financial\backend
 python -m celery -A app.workers.celery_app.celery_app worker --loglevel=info
 ```
 
+Run the full Docker stack from repo root:
+
+```powershell
+cd D:\development\optimize-financial
+docker compose up -d --build postgres redis
+docker compose run --rm backend python -m alembic upgrade head
+docker compose build backend
+docker compose build frontend
+docker compose up -d backend worker frontend
+```
+
+If Docker Desktop reports a BuildKit snapshot/export error such as `parent snapshot ... does not exist`, build `backend` and `frontend` separately as above instead of using one parallel `docker compose up -d --build backend worker frontend`.
+
 ## Test Map
 
 Key V1 tests:
@@ -267,4 +294,5 @@ Before changing backend behavior:
 - Preserve the existing bounded Agent 1-5 pipeline unless the user explicitly asks for a redesign.
 - Add or update Alembic migration and model imports for schema changes.
 - Add tests at the narrowest layer that proves the behavior.
+- In repository classes, avoid Python 3.11 annotation crashes caused by methods shadowing built-ins. If a class defines `def list(...)`, add `from __future__ import annotations` before later annotations such as `list[TranscriptTurn]`, or rename the method.
 - Run `python -m pytest -q` and `python -m ruff check .`.

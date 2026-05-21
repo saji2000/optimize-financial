@@ -162,7 +162,7 @@ export function SignalReviewPage() {
                 >
                   ⚑ follow-up
                 </button>
-                <button className="sbtn" onClick={() => navigate("/transcripts/TR-2041")}>
+                <button className="sbtn" onClick={() => navigate(`/transcripts/${s.transcriptId}`)}>
                   open in context →
                 </button>
               </footer>
@@ -227,6 +227,13 @@ export function SignalReviewPage() {
                         onClick={() => updateSignal(s.id, { flag: !s.flag })}
                       >
                         ⚑
+                      </button>
+                      <button
+                        className="iconbtn"
+                        title="open in context"
+                        onClick={() => navigate(`/transcripts/${s.transcriptId}`)}
+                      >
+                        ↗
                       </button>
                     </div>
                   </td>

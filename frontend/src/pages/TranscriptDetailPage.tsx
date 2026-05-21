@@ -8,7 +8,8 @@ import {
   TopBar,
 } from "../components/primitives";
 import { SignalCard } from "../components/SignalCard";
-import { transcripts, transcriptTurns, Signal } from "../data/mockData";
+import { Signal } from "../data/mockData";
+import { useTranscriptDetail } from "../data/DataProvider";
 import { useSignals } from "../data/SignalsStore";
 
 function renderTurnText(
@@ -36,8 +37,9 @@ function renderTurnText(
 export function TranscriptDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const transcript = transcripts.find((x) => x.id === id) || transcripts[0];
-  const { signals, updateSignal } = useSignals();
+  const { transcript, turns } = useTranscriptDetail(id);
+  const { signalsForTranscript, updateSignal } = useSignals();
+  const signals = signalsForTranscript(transcript?.id || id);
 
   const [activeTs, setActiveTs] = useState<string | null>(null);
   const [hoverQuote, setHoverQuote] = useState<string | null>(null);
@@ -56,6 +58,16 @@ export function TranscriptDetailPage() {
 
   const drivers = signals.filter((s) => s.type === "driver").sort((a, b) => a.rank - b.rank);
   const blockers = signals.filter((s) => s.type === "blocker").sort((a, b) => a.rank - b.rank);
+
+  if (!transcript) {
+    return (
+      <TopBar
+        title="Transcript not found"
+        subtitle="No backend or mock row is available for this id"
+        right={<Btn kind="ghost" onClick={() => navigate("/transcripts")}>Back to library</Btn>}
+      />
+    );
+  }
 
   return (
     <>
@@ -121,7 +133,7 @@ export function TranscriptDetailPage() {
             <div className="small slate">click any timestamp on the right to jump here</div>
           </div>
           <div className="turns">
-            {transcriptTurns.map((turn, i) => {
+            {turns.map((turn, i) => {
               const isActive = activeTs === turn.t;
               const isQuoted = signals.some((s) => s.timestamp === turn.t);
               return (
