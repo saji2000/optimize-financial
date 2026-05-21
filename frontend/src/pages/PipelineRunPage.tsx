@@ -7,16 +7,27 @@ import {
   Section,
   TopBar,
 } from "../components/primitives";
-import { pipelineSteps, transcripts } from "../data/mockData";
+import { usePipelineSteps, useTranscripts } from "../data/DataProvider";
 
 export function PipelineRunPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const transcripts = useTranscripts();
   const transcript = transcripts.find((x) => x.id === id) || transcripts[0];
-  const steps = pipelineSteps;
+  const steps = usePipelineSteps(transcript?.id || id);
   const total = steps.reduce((a, b) => a + b.cost, 0);
   const totalIn = steps.reduce((a, b) => a + b.tokensIn, 0);
   const totalOut = steps.reduce((a, b) => a + b.tokensOut, 0);
+
+  if (!transcript) {
+    return (
+      <TopBar
+        title="Pipeline run"
+        subtitle="No transcript is available for this run"
+        right={<Btn kind="ghost" onClick={() => navigate("/transcripts")}>Back to library</Btn>}
+      />
+    );
+  }
 
   return (
     <>

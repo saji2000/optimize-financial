@@ -34,6 +34,7 @@ export type SignalStatus = "pending" | "approved" | "rejected";
 
 export interface Signal {
   id: string;
+  transcriptId: string;
   type: SignalType;
   rank: number;
   category: string;
@@ -282,7 +283,7 @@ export const transcriptTurns: TranscriptTurn[] = [
 
 export const signals: Signal[] = [
   {
-    id: "S-001", type: "driver", rank: 1,
+    id: "S-001", transcriptId: "TR-2041", type: "driver", rank: 1,
     category: "Fee Transparency",
     quote: "Every time I see the statement I'm not sure what I'm actually paying versus what's bundled.",
     timestamp: "00:01:48",
@@ -291,7 +292,7 @@ export const signals: Signal[] = [
     status: "pending",
   },
   {
-    id: "S-002", type: "driver", rank: 2,
+    id: "S-002", transcriptId: "TR-2041", type: "driver", rank: 2,
     category: "Advisor Trust",
     quote: "The personal introduction matters. The previous firm — it always felt like we were just an account number.",
     timestamp: "00:11:02",
@@ -300,7 +301,7 @@ export const signals: Signal[] = [
     status: "approved",
   },
   {
-    id: "S-003", type: "driver", rank: 3,
+    id: "S-003", transcriptId: "TR-2041", type: "driver", rank: 3,
     category: "Performance vs Benchmark",
     quote: "I trust the call. The transparency on where the return came from is — that's the difference from where we were before.",
     timestamp: "00:15:55",
@@ -309,7 +310,7 @@ export const signals: Signal[] = [
     status: "pending",
   },
   {
-    id: "S-004", type: "driver", rank: 4,
+    id: "S-004", transcriptId: "TR-2041", type: "driver", rank: 4,
     category: "Reporting Quality",
     quote: "The old reports — we literally couldn't explain them to our son. He's the one who'd take this over eventually.",
     timestamp: "00:20:01",
@@ -318,7 +319,7 @@ export const signals: Signal[] = [
     status: "pending",
   },
   {
-    id: "S-005", type: "driver", rank: 5,
+    id: "S-005", transcriptId: "TR-2041", type: "driver", rank: 5,
     category: "Cash Flow Clarity",
     quote: "That alone — that single change — is meaningful. We had no idea.",
     timestamp: "00:26:08",
@@ -327,7 +328,7 @@ export const signals: Signal[] = [
     status: "pending",
   },
   {
-    id: "S-006", type: "blocker", rank: 1,
+    id: "S-006", transcriptId: "TR-2041", type: "blocker", rank: 1,
     category: "Statement Confusion",
     quote: "Every time I see the statement I'm not sure what I'm actually paying versus what's bundled.",
     timestamp: "00:01:48",
@@ -336,7 +337,7 @@ export const signals: Signal[] = [
     status: "pending",
   },
   {
-    id: "S-007", type: "blocker", rank: 2,
+    id: "S-007", transcriptId: "TR-2041", type: "blocker", rank: 2,
     category: "Service Lapses",
     quote: "Two months to get a statement reissued. If something happens to me I don't want her going through that.",
     timestamp: "00:07:18",
@@ -345,7 +346,7 @@ export const signals: Signal[] = [
     status: "pending",
   },
   {
-    id: "S-008", type: "blocker", rank: 3,
+    id: "S-008", transcriptId: "TR-2041", type: "blocker", rank: 3,
     category: "Tax Drag",
     quote: "Last year we got hit harder than we expected on the non-registered side.",
     timestamp: "00:03:55",

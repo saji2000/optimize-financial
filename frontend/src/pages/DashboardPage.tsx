@@ -1,14 +1,17 @@
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { BarRow, Btn, KPI, Money, Section, Sparkline, TopBar } from "../components/primitives";
-import { transcripts, activity } from "../data/mockData";
+import { useActivity, useTranscripts } from "../data/DataProvider";
 
 export function DashboardPage() {
   const navigate = useNavigate();
+  const transcripts = useTranscripts();
+  const activity = useActivity();
   const total = transcripts.length;
   const by = (s: string) => transcripts.filter((t) => t.status === s).length;
   const backlog = transcripts.filter((t) => t.reviewState === "pending").length;
   const cost = transcripts.reduce((a, b) => a + b.cost, 0);
+  const failedTranscript = transcripts.find((t) => t.status === "failed");
 
   const trend = useMemo(() => {
     const out: number[] = [];
@@ -28,10 +31,10 @@ export function DashboardPage() {
     <>
       <TopBar
         title="Dashboard"
-        subtitle="Tuesday · May 20, 2026"
+        subtitle="Tuesday - May 20, 2026"
         right={
           <Btn kind="ghost" onClick={() => navigate("/transcripts")}>
-            Open transcripts →
+            Open transcripts -&gt;
           </Btn>
         }
       />
@@ -40,7 +43,7 @@ export function DashboardPage() {
         <KPI
           label="Transcripts"
           value={total}
-          sub={`${by("completed")} completed · ${by("running")} running`}
+          sub={`${by("completed")} completed - ${by("running")} running`}
         />
         <KPI
           label="Review backlog"
@@ -57,15 +60,15 @@ export function DashboardPage() {
         <KPI
           label="Est. cost (all time)"
           value={"$" + cost.toFixed(2)}
-          sub={`avg $${(cost / total).toFixed(3)}/transcript`}
+          sub={`avg $${(cost / Math.max(total, 1)).toFixed(3)}/transcript`}
         />
       </div>
 
       <div className="grid-2">
         <Section
-          eyebrow="Pipeline health · 14 days"
+          eyebrow="Pipeline health - 14 days"
           title="Cost per transcript"
-          right={<span className="mono small">peak $0.51 · low $0.14</span>}
+          right={<span className="mono small">peak $0.51 - low $0.14</span>}
         >
           <div className="trendwrap">
             <Sparkline points={trend} w={620} h={120} />
@@ -77,25 +80,27 @@ export function DashboardPage() {
           </div>
           <div className="legend">
             <span className="dot dot--ink" /> daily mean spend
-            <span className="legend__sep">·</span>
-            <span className="mono">avg ${(cost / total).toFixed(3)}</span>
+            <span className="legend__sep">-</span>
+            <span className="mono">avg ${(cost / Math.max(total, 1)).toFixed(3)}</span>
           </div>
         </Section>
 
         <Section eyebrow="Status breakdown" title="Pipeline state">
-          <BarRow label="completed" value={by("completed")} max={total} color="var(--moss)" />
-          <BarRow label="running" value={by("running")} max={total} color="var(--amber)" />
-          <BarRow label="queued" value={by("queued")} max={total} color="var(--slate)" />
-          <BarRow label="failed" value={by("failed")} max={total} color="var(--rust)" />
-          <div className="callout">
-            <span className="dot dot--rust" />
-            <div>
-              <b>TR-2036</b> failed at step 3 with 3 retries. Reviewer attention recommended.
-              <button className="link" onClick={() => openTranscript("TR-2036")}>
-                Open run →
-              </button>
+          <BarRow label="completed" value={by("completed")} max={Math.max(total, 1)} color="var(--moss)" />
+          <BarRow label="running" value={by("running")} max={Math.max(total, 1)} color="var(--amber)" />
+          <BarRow label="queued" value={by("queued")} max={Math.max(total, 1)} color="var(--slate)" />
+          <BarRow label="failed" value={by("failed")} max={Math.max(total, 1)} color="var(--rust)" />
+          {failedTranscript && (
+            <div className="callout">
+              <span className="dot dot--rust" />
+              <div>
+                <b>{failedTranscript.id}</b> failed during processing. Reviewer attention recommended.
+                <button className="link" onClick={() => openTranscript(failedTranscript.id)}>
+                  Open run -&gt;
+                </button>
+              </div>
             </div>
-          </div>
+          )}
         </Section>
       </div>
 
@@ -108,11 +113,11 @@ export function DashboardPage() {
                 <span className="activity__who">{a.who}</span>
                 <span className="activity__action">
                   {a.action}
-                  {a.n ? <em className="activity__n"> · {a.n}</em> : null}
+                  {a.n ? <em className="activity__n"> - {a.n}</em> : null}
                 </span>
                 <span className="activity__when">{a.when}</span>
                 <button className="link" onClick={() => openTranscript(a.id)}>
-                  view →
+                  view -&gt;
                 </button>
               </li>
             ))}
@@ -146,7 +151,7 @@ export function DashboardPage() {
                     </td>
                     <td>
                       <button className="link" onClick={() => openTranscript(t.id)}>
-                        review →
+                        review -&gt;
                       </button>
                     </td>
                   </tr>

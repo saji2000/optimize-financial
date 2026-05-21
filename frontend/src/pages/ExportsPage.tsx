@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Btn, Field, Section, TopBar } from "../components/primitives";
-import { transcripts } from "../data/mockData";
+import { useTranscripts } from "../data/DataProvider";
 import { useSignals } from "../data/SignalsStore";
 
 export function ExportsPage() {
   const { signals } = useSignals();
+  const transcripts = useTranscripts();
   const [scope, setScope] = useState<"all" | "one">("all");
   const [fmt, setFmt] = useState<"csv" | "json" | "jsonl">("jsonl");
   const [pickId, setPickId] = useState("TR-2041");
@@ -12,9 +13,16 @@ export function ExportsPage() {
   const ready = transcripts.filter((t) => t.exportReady);
   const target =
     scope === "all" ? ready : transcripts.filter((t) => t.id === pickId);
+  const targetIds = useMemo(() => new Set(target.map((t) => t.id)), [target]);
 
-  const sampleRows = signals.slice(0, 4).map((s) => ({
-    transcript_id: target[0]?.id || "TR-2041",
+  useEffect(() => {
+    if (!ready.some((t) => t.id === pickId) && ready[0]) {
+      setPickId(ready[0].id);
+    }
+  }, [pickId, ready]);
+
+  const sampleRows = signals.filter((s) => targetIds.has(s.transcriptId)).slice(0, 4).map((s) => ({
+    transcript_id: s.transcriptId,
     item_type: s.type,
     rank: s.rank,
     category: s.category,
