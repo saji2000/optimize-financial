@@ -50,7 +50,7 @@ Agent 3 currently uses:
 
 - `CONSOLIDATION_RANKING_MODEL = settings.openai_model`, which defaults to `OPENAI_MODEL=gpt-5.5`.
 - `CONSOLIDATION_RANKING_FALLBACK_MODEL = settings.openai_model_mid`, which defaults to `OPENAI_MODEL_MID=gpt-5.4`.
-- `CONSOLIDATION_RANKING_SERVICE_TIER = "standard"` as the repo-facing latency/cost choice; `OpenAIClient` sends this to OpenAI as API `service_tier="default"`.
+- `CONSOLIDATION_RANKING_SERVICE_TIER = DEFAULT_SERVICE_TIER` as the repo-facing latency/cost choice, currently `flex`; pass repo-facing `service_tier="standard"` only as an explicit constructor override for a latency-sensitive run.
 - `CONSOLIDATION_RANKING_ENDPOINT = "responses"` because repeated `gpt-5.5` failures were observed on the previous Chat Completions structured parsing path, while `gpt-5.5` completed successfully through `client.responses.parse(...)`.
 - `CONSOLIDATION_RANKING_MAX_OUTPUT_TOKENS = 6000`; the shared 2000-token default could truncate Agent 3's structured JSON on larger candidate sets.
 - `backend/app/prompts/consolidation_ranking_v1.md` as the prompt.
@@ -293,7 +293,7 @@ Default model strategy:
 - Keep the selected model line obvious near the top of `consolidation_ranking_agent.py`: `CONSOLIDATION_RANKING_MODEL = settings.openai_model`.
 - Agent 3 fallback defaults to `OPENAI_MODEL_MID` / `settings.openai_model_mid`, currently `gpt-5.4`.
 - Keep the fallback model line obvious near the top of `consolidation_ranking_agent.py`: `CONSOLIDATION_RANKING_FALLBACK_MODEL = settings.openai_model_mid`.
-- Agent 3 defaults to repo-facing `CONSOLIDATION_RANKING_SERVICE_TIER = "standard"`, `CONSOLIDATION_RANKING_ENDPOINT = "responses"`, and `CONSOLIDATION_RANKING_MAX_OUTPUT_TOKENS = 6000`.
+- Agent 3 defaults to repo-facing `CONSOLIDATION_RANKING_SERVICE_TIER = DEFAULT_SERVICE_TIER`, currently `flex`, `CONSOLIDATION_RANKING_ENDPOINT = "responses"`, and `CONSOLIDATION_RANKING_MAX_OUTPUT_TOKENS = 6000`.
 - The constructor can override the primary model, fallback model, service tier, endpoint, and max output token budget for tests or controlled experiments.
 
 Ranking priorities:
