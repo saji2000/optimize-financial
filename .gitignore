@@ -5,6 +5,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 backend/.pytest-agent-output-writer/
+backend/.test-tmp/
 backend/pytest-cache-files-*/
 node_modules/
 dist/

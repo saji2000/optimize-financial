@@ -61,3 +61,8 @@ class FinalSignal(BaseModel):
     timestamp: str | None = None
     evidence_strength: EvidenceStrength
     rationale: str
+
+
+class PipelineOutputs(BaseModel):
+    prepared_transcript: PreparedTranscript
+    final_signals: list[FinalSignal]

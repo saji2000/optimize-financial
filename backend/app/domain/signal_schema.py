@@ -17,10 +17,10 @@ class SignalCandidate(BaseModel):
 class SignalRead(BaseModel):
     id: str
     transcript_id: str
-    signal_type: SignalType
+    item_type: SignalType
+    rank: int
     category: str
-    summary: str
-    evidence_quote: str
+    advisor_quote: str
+    timestamp: str | None = None
     evidence_strength: EvidenceStrength
     rationale: str
-
