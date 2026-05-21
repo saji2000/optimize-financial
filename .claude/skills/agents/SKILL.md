@@ -166,6 +166,13 @@ Keep backend boundaries intact:
 - Services and repositories own database access.
 - Only validated or finalized signals are business-user-visible by default.
 
+Review UI integration:
+
+- The frontend consumes only persisted prepared turns and final Agent-5 signals through V1 APIs.
+- Demo enrichment in the frontend may add advisor/client/duration/review/cost display metadata, but those fields are not pipeline output and should not be added to agent schemas.
+- Local artifact import can hydrate Postgres for review without rerunning OpenAI: `backend/scripts/import_agent_artifacts.py --base-path ..\data\outputs\agents-outputs`.
+- Artifact import reads `final-formatter/*.json` and matching `transcript-preparation/*.json`; it must not print artifact contents because they may contain confidential transcript-derived data.
+
 ## Component Contracts
 
 Use `backend/app/pipeline/schemas.py` as the shared in-process contract source:
@@ -475,6 +482,19 @@ REDIS_URL=redis://redis:6379/0
 ```
 
 If host PowerShell reports `failed to resolve host 'postgres'`, the host process is reading Docker-only database settings. Fix the root `.env` to use `localhost`.
+
+For Docker Compose full-stack runs, prefer building backend and frontend separately if Docker Desktop reports BuildKit snapshot/export errors:
+
+```powershell
+cd D:\development\optimize-financial
+docker compose up -d --build postgres redis
+docker compose run --rm backend python -m alembic upgrade head
+docker compose build backend
+docker compose build frontend
+docker compose up -d backend worker frontend
+```
+
+The worker command in Compose must use `app.workers.celery_app.celery_app`, and `backend/app/workers/celery_app.py` must include `app.workers.tasks` so `run_transcript_pipeline` is registered.
 
 To run the full pipeline for one transcript and write human-review artifacts without database usage persistence:
 
