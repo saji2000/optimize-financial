@@ -10,7 +10,7 @@ from app.pipeline.agents.final_formatting_agent import FinalFormattingAgent
 from app.pipeline.agents.signal_extraction_agent import SignalExtractionAgent
 from app.pipeline.agents.transcript_preparation_agent import TranscriptPreparationAgent
 from app.pipeline.agent_output_writer import AgentOutputWriter
-from app.pipeline.schemas import FinalSignal
+from app.pipeline.schemas import FinalSignal, PipelineOutputs
 
 
 LOGGER = logging.getLogger(__name__)
@@ -21,13 +21,26 @@ class PipelineOrchestrator:
         self,
         agent_output_writer: AgentOutputWriter | None = None,
         record_usage: bool = True,
+        pipeline_run_id: str | None = None,
     ) -> None:
         self.transcript_preparation_agent = TranscriptPreparationAgent()
         llm_client = None if record_usage else OpenAIClient()
-        self.signal_extraction_agent = SignalExtractionAgent(llm_client=llm_client)
-        self.consolidation_ranking_agent = ConsolidationRankingAgent(llm_client=llm_client)
-        self.evidence_validation_agent = EvidenceValidationAgent(llm_client=llm_client)
-        self.final_formatting_agent = FinalFormattingAgent(llm_client=llm_client)
+        self.signal_extraction_agent = SignalExtractionAgent(
+            llm_client=llm_client,
+            pipeline_run_id=pipeline_run_id,
+        )
+        self.consolidation_ranking_agent = ConsolidationRankingAgent(
+            llm_client=llm_client,
+            pipeline_run_id=pipeline_run_id,
+        )
+        self.evidence_validation_agent = EvidenceValidationAgent(
+            llm_client=llm_client,
+            pipeline_run_id=pipeline_run_id,
+        )
+        self.final_formatting_agent = FinalFormattingAgent(
+            llm_client=llm_client,
+            pipeline_run_id=pipeline_run_id,
+        )
         self.agent_output_writer = agent_output_writer or AgentOutputWriter()
 
     def run(
@@ -43,6 +56,9 @@ class PipelineOrchestrator:
         }
 
     def run_signals(self, transcript_id: str, raw_text: str) -> list[FinalSignal]:
+        return self.run_outputs(transcript_id=transcript_id, raw_text=raw_text).final_signals
+
+    def run_outputs(self, transcript_id: str, raw_text: str) -> PipelineOutputs:
         prepared = self.transcript_preparation_agent.run(transcript_id, raw_text)
         self._write_agent_output(
             transcript_id=transcript_id,
@@ -92,7 +108,7 @@ class PipelineOrchestrator:
             output_schema="FinalSignal[]",
             output=final_signals,
         )
-        return final_signals
+        return PipelineOutputs(prepared_transcript=prepared, final_signals=final_signals)
 
     def _write_agent_output(
         self,
