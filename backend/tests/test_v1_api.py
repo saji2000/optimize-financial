@@ -10,7 +10,19 @@ from app.db.repositories.pipeline_run_repo import PipelineRunRepository
 from app.main import app
 from app.pipeline.persistence import persist_pipeline_outputs
 from app.pipeline.schemas import FinalSignal, PreparedTranscript, TranscriptChunk, TranscriptTurn
+from app.security.auth import CURTIS_USER, create_access_token
 from app.services.llm_usage_service import LLMUsageEventCreate
+
+
+def auth_headers() -> dict[str, str]:
+    return {"Authorization": f"Bearer {create_access_token(CURTIS_USER)}"}
+
+
+def test_protected_routes_require_login() -> None:
+    client = TestClient(app)
+    assert client.get("/health").status_code == 200
+    assert client.get("/transcripts").status_code == 401
+    assert client.post("/auth/login", json={"username": "curtis", "password": "wrong"}).status_code == 401
 
 
 def test_transcript_upload_detail_signals_and_pipeline_runs(
@@ -30,8 +42,10 @@ def test_transcript_upload_detail_signals_and_pipeline_runs(
     app.dependency_overrides[get_db] = override_get_db
     try:
         client = TestClient(app)
+        headers = auth_headers()
         response = client.post(
             "/transcripts",
+            headers=headers,
             files={"file": ("call.txt", "00:01:00 Advisor: I need stronger support.", "text/plain")},
             data={"title": "Sanitized call"},
         )
@@ -110,7 +124,7 @@ def test_transcript_upload_detail_signals_and_pipeline_runs(
             )
             db.commit()
 
-        list_response = client.get("/transcripts")
+        list_response = client.get("/transcripts", headers=headers)
         assert list_response.status_code == 200
         transcript_list_row = list_response.json()[0]
         assert transcript_list_row["driver_count"] == 1
@@ -120,22 +134,22 @@ def test_transcript_upload_detail_signals_and_pipeline_runs(
         assert "raw_text" not in transcript_list_row["usage"]
         assert "prompt_payload" not in transcript_list_row["usage"]
 
-        detail_response = client.get(f"/transcripts/{transcript['id']}")
+        detail_response = client.get(f"/transcripts/{transcript['id']}", headers=headers)
         assert detail_response.status_code == 200
         detail = detail_response.json()
         assert detail["turns"][0]["speaker_role"] == "advisor"
         assert detail["final_signals"][0]["item_type"] == "driver"
         assert detail["usage"]["estimated_total_cost_usd"] == 0.012
 
-        turns_response = client.get(f"/transcripts/{transcript['id']}/turns")
+        turns_response = client.get(f"/transcripts/{transcript['id']}/turns", headers=headers)
         assert turns_response.status_code == 200
         assert turns_response.json()[0]["source_chunk_id"].endswith("_chunk_001")
 
-        signals_response = client.get(f"/signals?transcript_id={transcript['id']}")
+        signals_response = client.get(f"/signals?transcript_id={transcript['id']}", headers=headers)
         assert signals_response.status_code == 200
         assert signals_response.json()[0]["advisor_quote"] == "I need stronger support."
 
-        runs_response = client.get("/pipeline-runs")
+        runs_response = client.get("/pipeline-runs", headers=headers)
         assert runs_response.status_code == 200
         run_list_row = runs_response.json()[0]
         assert run_list_row["id"] == pipeline_run_id
@@ -143,7 +157,7 @@ def test_transcript_upload_detail_signals_and_pipeline_runs(
         assert run_list_row["usage_by_step"][0]["pipeline_step"] == "segment_signal_extraction"
         assert run_list_row["usage_by_step"][0]["models"] == ["gpt-5.4"]
 
-        run_response = client.get(f"/pipeline-runs/{pipeline_run_id}")
+        run_response = client.get(f"/pipeline-runs/{pipeline_run_id}", headers=headers)
         assert run_response.status_code == 200
         run_detail = run_response.json()
         assert run_detail["transcript_id"] == transcript["id"]
@@ -175,7 +189,8 @@ def test_usage_responses_zero_fill_when_no_events(
             db.commit()
 
         client = TestClient(app)
-        transcript_row = client.get("/transcripts").json()[0]
+        headers = auth_headers()
+        transcript_row = client.get("/transcripts", headers=headers).json()[0]
         assert transcript_row["usage"] == {
             "calls": 0,
             "input_tokens": 0,
@@ -186,7 +201,7 @@ def test_usage_responses_zero_fill_when_no_events(
             "latest_pricing_version": None,
         }
 
-        run_row = client.get(f"/pipeline-runs/{run_id}").json()
+        run_row = client.get(f"/pipeline-runs/{run_id}", headers=headers).json()
         assert run_row["usage"]["calls"] == 0
         assert run_row["usage_by_step"] == []
     finally:

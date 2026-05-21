@@ -1,7 +1,8 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import exports, pipeline_runs, review, signals, transcripts
+from app.api.routes import auth, exports, pipeline_runs, review, signals, transcripts
+from app.security.auth import require_current_user
 
 
 app = FastAPI(title="Advisor Signal Extraction API", version="0.1.0")
@@ -14,11 +15,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(transcripts.router, prefix="/transcripts", tags=["transcripts"])
-app.include_router(signals.router, prefix="/signals", tags=["signals"])
-app.include_router(review.router, prefix="/review", tags=["review"])
-app.include_router(pipeline_runs.router, prefix="/pipeline-runs", tags=["pipeline-runs"])
-app.include_router(exports.router, prefix="/exports", tags=["exports"])
+auth_required = [Depends(require_current_user)]
+
+app.include_router(auth.router, prefix="/auth", tags=["auth"])
+app.include_router(transcripts.router, prefix="/transcripts", tags=["transcripts"], dependencies=auth_required)
+app.include_router(signals.router, prefix="/signals", tags=["signals"], dependencies=auth_required)
+app.include_router(review.router, prefix="/review", tags=["review"], dependencies=auth_required)
+app.include_router(
+    pipeline_runs.router,
+    prefix="/pipeline-runs",
+    tags=["pipeline-runs"],
+    dependencies=auth_required,
+)
+app.include_router(exports.router, prefix="/exports", tags=["exports"], dependencies=auth_required)
 
 
 @app.get("/health")

@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import {
+  ApiError,
   DATA_MODE,
   getTranscript,
   listPipelineRuns,
@@ -90,7 +91,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unable to load backend data";
       setError(message);
-      if (DATA_MODE === "hybrid") {
+      if (err instanceof ApiError && err.status === 401) {
+        setSource("api");
+        setTranscripts([]);
+        setApiSignals([]);
+        setPipelineRuns([]);
+      } else if (DATA_MODE === "hybrid") {
         setSource("mock");
         setTranscripts(cloneTranscripts(mockTranscripts));
         setApiSignals(cloneSignals(mockSignals));
