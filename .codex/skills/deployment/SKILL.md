@@ -11,11 +11,11 @@ Use this skill for deployment, local full-stack startup, Docker Compose, environ
 
 The local stack is:
 
-- `postgres`: PostgreSQL 16 on host port `5432`.
-- `redis`: Redis 7 on host port `6379`.
-- `backend`: FastAPI/Uvicorn on host port `8000`.
+- `postgres`: PostgreSQL 16 on host port `2040` and container port `5432`.
+- `redis`: Redis 7 on host port `2050` and container port `6379`.
+- `backend`: FastAPI/Uvicorn on host/container port `2030`.
 - `worker`: Celery worker consuming Redis jobs.
-- `frontend`: Vite dev server on host port `5173`.
+- `frontend`: Vite dev server on host/container port `2020`.
 
 Do not put real transcripts, raw customer/advisor data, or `data/outputs/` artifacts into git. Artifact import is for local/demo review only unless explicitly sanitized.
 
@@ -35,7 +35,7 @@ Important Compose behavior:
 - Compose overrides backend/worker URLs to Docker service names:
   - `DATABASE_URL=postgresql+psycopg://advisor:advisor@postgres:5432/advisor_signal_extraction`
   - `REDIS_URL=redis://redis:6379/0`
-- Host-local commands should use `.env` values with `localhost`, not Docker service names.
+- Host-local commands should use `.env` values with `localhost` ports `2040` for Postgres and `2050` for Redis, not Docker service names.
 - The worker command must use the package visible from `/app/backend`:
   - `celery -A app.workers.celery_app.celery_app worker --loglevel=INFO`
   - Do not use `backend.app...` inside the current backend container working directory.
@@ -57,9 +57,9 @@ Building `backend` and `frontend` separately is more reliable on Docker Desktop 
 
 Open:
 
-- Frontend: `http://localhost:5173`
-- Backend health: `http://localhost:8000/health`
-- Transcript API: `http://localhost:8000/transcripts`
+- Frontend: `http://localhost:2020`
+- Backend health: `http://localhost:2030/health`
+- Transcript API: `http://localhost:2030/transcripts`
 
 Check status and logs:
 
@@ -93,12 +93,12 @@ Use `GET /transcripts` and `GET /signals` to confirm rows exist before debugging
 
 The frontend defaults to:
 
-- `VITE_API_BASE=http://localhost:8000`
+- `VITE_API_BASE=http://localhost:2030`
 - `VITE_DATA_MODE=hybrid`
 
 `hybrid` mode uses backend rows when available and merges local demo enrichment for advisor/client/duration/cost polish. If the backend is down, hybrid mode falls back to mock rows. `api` mode is backend-only. `mock` mode is the original polished demo.
 
-FastAPI has local CORS enabled in `backend/app/main.py` for Vite dev origins matching `localhost` or `127.0.0.1` on ports `5170-5179`. If the frontend loads but shows no backend data, check browser console/network, backend health, and CORS before changing DTOs.
+FastAPI has local CORS enabled in `backend/app/main.py` for Vite dev origins matching `localhost` or `127.0.0.1` on port `2020`. If the frontend loads but shows no backend data, check browser console/network, backend health, and CORS before changing DTOs.
 
 ## Worker Wiring
 
@@ -159,9 +159,9 @@ In Python 3.11 this can happen when a class method named `list` shadows the buil
 Backend reachable, frontend blank or quiet:
 
 - Confirm frontend container is up: `docker compose ps`.
-- Confirm Vite responds: `Invoke-WebRequest http://localhost:5173`.
-- Confirm API responds: `Invoke-WebRequest http://localhost:8000/health`.
-- Confirm backend data exists: `Invoke-WebRequest http://localhost:8000/transcripts`.
+- Confirm Vite responds: `Invoke-WebRequest http://localhost:2020`.
+- Confirm API responds: `Invoke-WebRequest http://localhost:2030/health`.
+- Confirm backend data exists: `Invoke-WebRequest http://localhost:2030/transcripts`.
 - Import local artifacts if the database is empty.
 
 Worker starts but uploads never complete:
@@ -180,7 +180,7 @@ cd D:\development\optimize-financial
 docker compose up -d postgres redis
 cd backend
 python -m alembic upgrade head
-python -m uvicorn app.main:app --reload
+python -m uvicorn app.main:app --reload --port 2030
 ```
 
 In another terminal:
@@ -194,10 +194,10 @@ In another terminal:
 
 ```powershell
 cd D:\development\optimize-financial\frontend
-npm run dev -- --host 127.0.0.1
+npm run dev -- --host 127.0.0.1 --port 2020
 ```
 
-Use `http://127.0.0.1:5173` or `http://localhost:5173`.
+Use `http://127.0.0.1:2020` or `http://localhost:2020`.
 
 ## Validation
 

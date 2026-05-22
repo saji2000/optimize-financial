@@ -1,5 +1,6 @@
 import logging
 
+from app.core.sentry import capture_sanitized_exception
 from app.db.repositories.pipeline_run_repo import PipelineRunRepository
 from app.db.repositories.transcript_repo import TranscriptRepository
 from app.db.session import SessionLocal
@@ -52,6 +53,13 @@ def run_transcript_pipeline(
             pipeline_run_id=run_id,
             error_type=error_type,
             error_message=error_message,
+        )
+        capture_sanitized_exception(
+            exc,
+            pipeline_run_id=run_id,
+            transcript_id=transcript_id,
+            agent_name="PipelineOrchestrator",
+            pipeline_step="worker_task",
         )
         LOGGER.error(
             "Pipeline task failed for transcript_id=%r pipeline_run_id=%r error_type=%s",

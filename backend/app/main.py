@@ -2,14 +2,17 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import auth, exports, pipeline_runs, review, signals, transcripts
+from app.core.sentry import configure_sentry
 from app.security.auth import require_current_user
 
+
+configure_sentry(service_name="backend")
 
 app = FastAPI(title="Advisor Signal Extraction API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1):517[0-9]",
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1):2020",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

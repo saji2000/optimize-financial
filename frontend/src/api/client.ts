@@ -10,7 +10,7 @@ import {
   TranscriptTurnRead,
 } from "./types";
 
-export const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+export const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:2030";
 export const DATA_MODE: DataMode = parseDataMode(import.meta.env.VITE_DATA_MODE);
 export const AUTH_SESSION_STORAGE_KEY = "optimize_auth_session";
 

@@ -1,6 +1,6 @@
 ---
 name: backend
-description: "Use as repo knowledge for Optimize Financial backend work: FastAPI routes, PostgreSQL/Alembic persistence, SQLAlchemy models/repositories/services, Celery worker execution, transcript upload/list/detail APIs, final Agent-5 signal serving, pipeline-run status, artifact import, LLM usage tracking, and backend tests. Use when modifying code under backend/, backend migrations, worker tasks, API schemas, persistence scripts, or backend smoke/test workflows."
+description: "Use as repo knowledge for Optimize Financial backend work: FastAPI routes, PostgreSQL/Alembic persistence, SQLAlchemy models/repositories/services, Celery worker execution, transcript upload/list/detail APIs, final public signal serving, pipeline-run status, artifact import, LLM usage tracking, and backend tests. Use when modifying code under backend/, backend migrations, worker tasks, API schemas, persistence scripts, or backend smoke/test workflows."
 ---
 
 # Optimize Backend Knowledge
@@ -13,7 +13,7 @@ Backend V1 stores and serves only real pipeline data:
 
 - Uploaded transcript raw text and processing status.
 - Prepared Agent-1 transcript turns.
-- Final Agent-5 public signals.
+- Final public signals from deterministic final formatting.
 - Pipeline run status and sanitized failures.
 - Existing `llm_usage_events` for LLM call usage, cost, latency, retry, and failure metadata.
 - Aggregated LLM usage read models for transcripts and pipeline runs.
@@ -46,7 +46,7 @@ Main entry points:
 
 Local frontend integration:
 
-- `backend/app/main.py` includes `CORSMiddleware` for Vite dev origins matching `localhost` and `127.0.0.1` on ports `5170-5179`.
+- `backend/app/main.py` includes `CORSMiddleware` for Vite dev origins matching `localhost` and `127.0.0.1` on port `2020`.
 - Keep CORS local and explicit. Do not broaden production origins without an actual deployment target and auth story.
 
 Authentication:
@@ -126,7 +126,7 @@ Implemented V1 routes:
 
 - `GET /signals`
   - Requires bearer authentication.
-  - Returns all final Agent-5 signals.
+  - Returns all final public signals.
   - Optional query: `transcript_id`.
   - Response shape is public final schema plus internal generated `id`.
 
@@ -168,7 +168,7 @@ Important public signal shape is `SignalRead` in `backend/app/domain/signal_sche
 }
 ```
 
-Do not use the old `signal_type` / `summary` / `evidence_quote` shape for final Agent-5 API output.
+Do not use the old `signal_type` / `summary` / `evidence_quote` shape for final public API output.
 
 ## Worker Flow
 
@@ -270,7 +270,7 @@ cd D:\development\optimize-financial\backend
 python -m alembic upgrade head
 ```
 
-If `python -m alembic upgrade head` times out on `localhost:5432`, local Postgres is not reachable. The migration chain can be smoke-tested without Postgres with:
+If `python -m alembic upgrade head` times out on `localhost:2040`, local Postgres is not reachable. The migration chain can be smoke-tested without Postgres with:
 
 ```powershell
 cd D:\development\optimize-financial\backend
@@ -290,7 +290,7 @@ Run the API locally:
 
 ```powershell
 cd D:\development\optimize-financial\backend
-python -m uvicorn app.main:app --reload
+python -m uvicorn app.main:app --reload --port 2030
 ```
 
 Run a worker when Redis/Postgres are available:

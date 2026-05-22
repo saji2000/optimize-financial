@@ -118,9 +118,9 @@ docker compose up -d backend worker frontend
 
 Open:
 
-- Frontend: `http://localhost:5173`
-- Backend health: `http://localhost:8000/health`
-- Transcript API: `http://localhost:8000/transcripts` after signing in; protected API routes require a bearer token.
+- Frontend: `http://localhost:2020`
+- Backend health: `http://localhost:2030/health`
+- Transcript API: `http://localhost:2030/transcripts` after signing in; protected API routes require a bearer token.
 
 If Docker Desktop reports a BuildKit snapshot/export error such as `parent snapshot ... does not exist`, treat it as a Docker cache/export issue, not an application bug. Build `backend` and `frontend` separately as shown above instead of using one parallel `docker compose up -d --build backend worker frontend`.
 
@@ -148,7 +148,7 @@ The backend should remain layered:
 Important backend concerns:
 
 - Use FastAPI, Pydantic, SQLAlchemy, Alembic, Celery/Redis, PostgreSQL, and the OpenAI Python SDK.
-- FastAPI local CORS is enabled in `backend/app/main.py` for Vite dev origins on `localhost` and `127.0.0.1` ports `5170-5179`; do not broaden production origins without an explicit deployment/auth plan.
+- FastAPI local CORS is enabled in `backend/app/main.py` for Vite dev origins on `localhost` and `127.0.0.1` port `2020`; do not broaden production origins without an explicit deployment/auth plan.
 - Local app authentication is implemented in `backend/app/api/routes/auth.py`, `backend/app/domain/auth_schema.py`, and `backend/app/security/auth.py`.
 - The only configured local application user is `curtis`; this user has full access and is not connected to transcript ownership or row-level permissions.
 - The password is verified with a salted PBKDF2-SHA256 hash and fixed iteration count. Store only the generated salt and hash in code or configuration; never commit or document the plaintext password.
@@ -211,7 +211,7 @@ The frontend should be a work-focused internal review tool, not a marketing site
 
 Current frontend integration mode is hybrid:
 
-- `VITE_API_BASE` defaults to `http://localhost:8000`.
+- `VITE_API_BASE` defaults to `http://localhost:2030`.
 - `VITE_DATA_MODE` defaults to `hybrid`.
 - `mock` mode keeps the original mock-only polished demo.
 - `api` mode uses backend-only data with minimal fallback display metadata.
@@ -536,47 +536,18 @@ Purpose: produce the exact public deliverable schema from Agent 4 validated sign
 Current implementation:
 
 - Implemented in `backend/app/pipeline/agents/final_formatting_agent.py`.
-- Uses one OpenAI structured-output call per transcript validated-signal set through the Responses API (`client.responses.parse(...)`) via the centralized `OpenAIClient`.
-- Defaults to `settings.openai_model_mid`, currently `OPENAI_MODEL_MID=gpt-5.4`, through `FINAL_FORMATTING_MODEL`.
-- Uses repo-facing `FINAL_FORMATTING_SERVICE_TIER = DEFAULT_SERVICE_TIER`, currently `flex`.
-- Uses `FINAL_FORMATTING_ENDPOINT = "responses"` and `FINAL_FORMATTING_MAX_OUTPUT_TOKENS = 3000`.
-- Uses prompt `backend/app/prompts/final_formatting_v1.md` and prompt version `final_formatting_v1`.
-- Uses strict structured output models `FinalSignalOutput` and `FinalFormattingResult` in `backend/app/llm/structured_outputs.py`.
-- Uses `LLMCallContext` with agent name `FinalFormattingAgent`, pipeline step `final_formatting`, and `chunk_id=None` because final formatting is transcript-level.
-- Preserves `run(validated_candidates: list[ValidatedSignal]) -> list[FinalSignal]` so the orchestrator contract stays unchanged.
-- Returns `[]` without an LLM call when no validated signals exist.
-- `PipelineOrchestrator(record_usage=False)` passes the same no-usage `OpenAIClient` to Agents 2, 3, 4, and 5 so local smoke runs do not require Postgres.
+- Implemented as deterministic `FinalFormatter`; `FinalFormattingAgent = FinalFormatter` remains as a temporary import-compatibility alias.
+- Preserves `run(validated_signals: list[ValidatedSignal]) -> list[FinalSignal]` so the orchestrator contract stays unchanged.
+- Returns `[]` when no validated signals exist.
+- Requires all validated signals to share one `transcript_id`.
+- Preserves public fields exactly: `transcript_id`, `item_type`, `rank`, `category`, `advisor_quote`, `timestamp`, `evidence_strength`, and `rationale`.
+- Excludes internal fields such as `validation_notes` and `source_chunk_id` from public output.
+- Sorts drivers before blockers, then by existing rank.
+- Re-numbers ranks contiguously per `item_type` and caps each type at three as a defensive invariant.
+- Does not call OpenAI, load prompts, parse structured model output, or create LLM usage rows.
+- Orchestrator still writes `final-formatter/{safe_transcript_id}.json` artifacts with `agent_name="FinalFormatter"`, `pipeline_step="final_formatting"`, and `output_schema="FinalSignal[]"`.
 
-Agent 5 input payload shape:
-
-```json
-{
-  "transcript_id": "call_001",
-  "validated_signal_count": 1,
-  "validated_signals": [
-    {
-      "validated_signal_id": "validated_signal_001",
-      "item_type": "driver",
-      "rank": 1,
-      "category": "Operational support",
-      "advisor_quote": "I need stronger operations support.",
-      "timestamp": "00:01:00",
-      "evidence_strength": "explicit",
-      "rationale": "The advisor states a support need."
-    }
-  ]
-}
-```
-
-Post-LLM guardrails:
-
-- Validate `source_validated_signal_id` exists.
-- Reject duplicate selected `source_validated_signal_id` values.
-- Reject model output whose `item_type` does not match the selected source validated signal.
-- Enforce max three final outputs per `item_type`.
-- Re-number final signals contiguously by `item_type` in code.
-- Construct final `FinalSignal` objects in code using the selected source validated signal's `transcript_id`, not model-supplied identifiers.
-- Exclude internal fields such as `validation_notes` and `source_chunk_id` from the public output.
+`backend/app/prompts/final_formatting_v1.md` may remain for historical comparison, but it is obsolete for current production execution.
 
 ## Prompt and API Deliverables
 
@@ -586,12 +557,12 @@ The assignment requires reusable production prompts and representative API snipp
 - `backend/app/prompts/signal_extraction_v1.md`
 - `backend/app/prompts/consolidation_ranking_v1.md`
 - `backend/app/prompts/evidence_validation_v1.md`
-- `backend/app/prompts/final_formatting_v1.md`
+- `backend/app/prompts/final_formatting_v1.md` (obsolete; retained only for historical comparison)
 
 API snippets should show:
 
 - OpenAI model choice.
-- Input structure for the selected endpoint. Agent 2 currently uses Chat Completions structured parsing with `messages`; Agents 3, 4, and 5 use Responses structured parsing with `instructions`, JSON-string `input`, and `text_format`.
+- Input structure for the selected endpoint. Agent 2 currently uses Chat Completions structured parsing with `messages`; Agents 3 and 4 use Responses structured parsing with `instructions`, JSON-string `input`, and `text_format`. Final formatting is deterministic and has no endpoint payload.
 - Structured output JSON schema.
 - Temperature and relevant parameters.
 - Repo-facing `service_tier: "flex"` by default, with repo-facing `service_tier: "standard"` only for explicitly latency-sensitive agent calls. Note that `OpenAIClient` maps repo `"standard"` to API `"default"`.
@@ -600,7 +571,7 @@ API snippets should show:
 - Estimated cost calculation.
 - Prompt/model version pinning.
 
-Use structured outputs for extraction, ranking, validation, and final formatting. Do not rely on free-form JSON in production paths.
+Use structured outputs for extraction, ranking, and validation. Final formatting is a deterministic projection into `FinalSignal[]`. Do not rely on free-form JSON in production paths.
 
 Local smoke scripts:
 
@@ -609,12 +580,11 @@ Local smoke scripts:
 - Agent 2 extraction: `backend/scripts/run_signal_extraction_for_prepared.py`.
 - Agent 3 consolidation/ranking: `backend/scripts/run_consolidation_ranking_for_candidates.py`.
 - Agent 4 evidence validation: `backend/scripts/run_evidence_validation_for_ranked.py`.
-- Agent 5 final formatting: `backend/scripts/run_final_formatting_for_validated.py`.
+- Deterministic final formatting: `backend/scripts/run_final_formatting_for_validated.py`.
 - Agent 1 inspection supports `--mode summary`, `--mode preview`, and `--mode full`; prefer `summary` unless full local JSON is needed.
 - Agent 3 supports `--dry-run-input` to print the exact JSON input payload without calling OpenAI.
 - Agent 4 supports `--dry-run-input` to print the exact JSON input payload without calling OpenAI.
-- Agent 5 supports `--dry-run-input` to print the exact JSON input payload without calling OpenAI.
-- Full pipeline, Agent 2, Agent 3, Agent 4, and Agent 5 smoke scripts disable database usage recording by default; pass `--record-usage` only when Postgres is available and migrations have run.
+- Full pipeline, Agent 2, Agent 3, and Agent 4 smoke scripts disable database usage recording by default; pass `--record-usage` only when Postgres is available and migrations have run. Deterministic final formatting never records LLM usage.
 
 To run the full pipeline for every local transcript and write human-review artifacts:
 
@@ -647,14 +617,7 @@ cd D:\development\optimize-financial\backend
 python scripts\run_evidence_validation_for_ranked.py ..\data\outputs\agents-outputs\ranking-agent\example.json --output validated_signals.local.json
 ```
 
-To inspect the exact Agent 5 LLM input payload without calling OpenAI:
-
-```powershell
-cd D:\development\optimize-financial\backend
-python scripts\run_final_formatting_for_validated.py ..\data\outputs\agents-outputs\critic-agent\example.json --dry-run-input
-```
-
-To test Agent 5 without database usage persistence and write a final-formatter artifact from a critic-agent artifact:
+To test deterministic final formatting and write a final-formatter artifact from a critic-agent artifact:
 
 ```powershell
 cd D:\development\optimize-financial\backend
@@ -669,7 +632,7 @@ Use a tiered model strategy:
 - Chunk extraction: mid-tier or strong model, because it needs judgment but can run independently per chunk.
 - Consolidation/ranking: strong reasoning model, because it requires cross-segment prioritization and restraint; keep a mid-tier fallback configured for transient primary-model/API failures so one unstable model does not block the whole local pipeline.
 - Evidence validation: strong reasoning model, because false positives are the highest-risk failure mode; keep a mid-tier fallback configured for transient primary-model/API failures so local transcript batches can still complete after rate limits or 5xx errors.
-- Final formatting: mid-tier/cheaper model with schema enforcement, currently `OPENAI_MODEL_MID=gpt-5.4`, because Agent 5 should only format validated signals and must not revalidate or invent signals.
+- Final formatting: deterministic projection; no model call, prompt, token usage, or usage row is created.
 
 Model IDs should be pinned in config and persisted with each pipeline run. Pricing and model choices should be checked against current OpenAI documentation before final submission or deployment.
 
@@ -764,7 +727,7 @@ Recommended implementation:
 
 - Add an `llm_usage_events` or similarly named PostgreSQL table.
 - Centralize OpenAI calls through `backend/app/llm/openai_client.py` so usage tracking cannot be bypassed.
-- `OpenAIClient` supports endpoint selection through `endpoint="chat_completions"` and `endpoint="responses"`. Agent 2 currently uses the default Chat Completions structured parsing path with `messages`. Agents 3, 4, and 5 use the Responses structured parsing path with `instructions`, JSON-string `input`, and `text_format`.
+- `OpenAIClient` supports endpoint selection through `endpoint="chat_completions"` and `endpoint="responses"`. Agent 2 currently uses the default Chat Completions structured parsing path with `messages`. Agents 3 and 4 use the Responses structured parsing path with `instructions`, JSON-string `input`, and `text_format`. Final formatting does not use `OpenAIClient`.
 - Keep model pricing in versioned configuration, not hardcoded inside agents.
 - Centralized OpenAI calls must send repo-facing `service_tier: "flex"` unless the specific agent call passes repo-facing `service_tier: "standard"`. The centralized client maps repo-facing `"standard"` to OpenAI API `"default"`.
 - Store price version or pricing timestamp with each usage event so historical costs remain explainable after pricing changes.
@@ -772,7 +735,7 @@ Recommended implementation:
 - On failed calls, persist the attempted model, agent, prompt version, latency, retry count, and sanitized error class.
 - On failed calls, emit sanitized logs with request ID when available, status code, model, endpoint, repo-facing service tier, API service tier, agent name, pipeline step, transcript ID, chunk ID, attempt count, and retryability. Never log prompts, raw transcript text, candidate payloads, model output text, or full exception messages that may contain confidential content.
 - Retry only transient OpenAI/API failures such as rate limits, timeouts, connection errors, and 5xx responses. Centralized retry backoff starts at 60 seconds and doubles after each failed retryable attempt. With the default three attempts, retry delays are 60 seconds and 120 seconds before the call fails or an agent-level fallback is considered. Do not retry or fallback for local validation errors, malformed structured output, authentication/configuration errors, permission errors, not-found errors, or bad requests.
-- Agents 3 and 4 may make a second model call only after the primary model fails with a retryable transient error after exhausting bounded retries; this protects local transcript batches from repeated rate limits or 5xx responses without hiding schema or prompt bugs. Agent 5 currently has no fallback model; it relies on the centralized retry policy.
+- Agents 3 and 4 may make a second model call only after the primary model fails with a retryable transient error after exhausting bounded retries; this protects local transcript batches from repeated rate limits or 5xx responses without hiding schema or prompt bugs.
 - Do not use fallback for `BadRequestError` or Pydantic `ValidationError`; these are configuration/schema/output-budget problems to fix directly. One observed Responses failure was a 400 caused by sending literal `service_tier="standard"`; the fix was mapping repo `standard` to API `default`. Another observed failure was truncated Agent 3 structured JSON with a 2000-token budget; the fix was `CONSOLIDATION_RANKING_MAX_OUTPUT_TOKENS = 6000`.
 - Emit structured application logs with correlation IDs such as `pipeline_run_id`, `transcript_id`, and `agent_name`.
 - Send exceptions and failed worker jobs to Sentry with transcript contents redacted.
@@ -781,9 +744,9 @@ Recommended implementation:
 Local pipeline runs:
 
 - `backend/scripts/run_pipeline_for_transcript.py` disables database usage recording by default so local artifact review can run without Postgres.
-- `backend/scripts/run_final_formatting_for_validated.py` can read a `critic-agent` artifact envelope or raw `ValidatedSignal[]`, supports `--dry-run-input`, `--output`, `--output-dir`, and `--record-usage`, and writes `final-formatter` artifacts by default when invoked on files under `data/outputs/agents-outputs/critic-agent`.
+- `backend/scripts/run_final_formatting_for_validated.py` can read a `critic-agent` artifact envelope or raw `ValidatedSignal[]`, supports `--output` and `--output-dir`, and writes `final-formatter` artifacts by default when invoked on files under `data/outputs/agents-outputs/critic-agent`.
 - Pass `--record-usage` when Postgres is running and migrations have been applied.
-- A timeout on `localhost:5432` after an OpenAI response usually means usage recording could not connect to Postgres; it is not caused by `service_tier: "flex"`.
+- A timeout on `localhost:2040` after an OpenAI response usually means usage recording could not connect to Postgres; it is not caused by `service_tier: "flex"`.
 - `service_tier: "flex"` may increase OpenAI latency, but it does not affect database connectivity.
 - `RateLimitError` / 429 logs during local runs mean the current model call is delayed and retried; if all primary attempts fail, Agents 3 or 4 may use their configured fallback model. Successful final output means the step was not skipped.
 

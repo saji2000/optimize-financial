@@ -40,7 +40,7 @@ export function SignalReviewPage() {
     <>
       <TopBar
         title="Signal review"
-        subtitle={`${signals.length} Agent-5 signals · ${counts.pending} pending · ${counts.approved} approved · ${counts.rejected} rejected`}
+        subtitle={`${signals.length} final signals · ${counts.pending} pending · ${counts.approved} approved · ${counts.rejected} rejected`}
         right={
           <div className="seg">
             <button

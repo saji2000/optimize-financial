@@ -173,7 +173,7 @@ export function TranscriptDetailPage() {
         <div className="detail__output">
           <div className="agent5-head">
             <div>
-              <div className="eyebrow">Final · Agent 5</div>
+              <div className="eyebrow">Deterministic final formatting</div>
               <h2 className="agent5-title">
                 Drivers <span className="slate">/</span> Blockers
               </h2>

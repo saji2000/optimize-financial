@@ -9,7 +9,7 @@ description: "Use as repo knowledge for the Optimize Financial Review frontend: 
 
 Use this skill for frontend work under `D:\development\optimize-financial\frontend`.
 
-The frontend is an internal reviewer tool for inspecting Agent-5 final signals, reviewing evidence in prepared transcript turns, monitoring pipeline status/cost, uploading transcripts, and previewing public exports. It is not a marketing site.
+The frontend is an internal reviewer tool for inspecting final public signals, reviewing evidence in prepared transcript turns, monitoring pipeline status/cost, uploading transcripts, and previewing public exports. It is not a marketing site.
 
 Confidentiality rules apply: do not render raw transcript text outside the transcript viewer, do not log transcript text, and do not include transcript content in analytics/export views beyond the public final signal fields.
 
@@ -20,14 +20,14 @@ The app now uses a frontend-first hybrid data layer:
 - App auth is real, not demo-only: `src/pages/LoginPage.tsx` submits username/password to the backend, and signed-in users receive a bearer token.
 - The only configured local user is `curtis`. The plaintext password is intentionally not stored in frontend code or documented in repo guidance; the backend verifies it with a salted PBKDF2-SHA256 hash.
 - Non-authenticated users cannot see logged-in pages. `AppShell` checks `AuthProvider.user` before mounting `DataProvider` and `SignalsProvider`.
-- Backend remains the factual source for uploaded transcripts, prepared turns, final Agent-5 signals, and pipeline status.
+- Backend remains the factual source for uploaded transcripts, prepared turns, final public signals, and pipeline status.
 - Local demo enrichment preserves polished advisor/client/duration/review metadata for presentation.
 - API-backed transcript and pipeline cost/token/call/retry values come from backend `llm_usage_events` aggregates, not demo enrichment.
 - No backend schema changes were introduced for enrichment/review metadata.
 
 Default local mode:
 
-- `VITE_API_BASE` defaults to `http://localhost:8000`.
+- `VITE_API_BASE` defaults to `http://localhost:2030`.
 - `VITE_DATA_MODE` defaults to `hybrid`.
 - `mock`: original mock-only polished demo.
 - `api`: backend-only with minimal fallback display values.
@@ -163,21 +163,21 @@ Keep the internal-tool feel: dense, scannable, restrained, and operational. Reus
 
 ## Backend Integration Notes
 
-FastAPI local CORS is enabled in `backend/app/main.py` for Vite dev origins on `localhost`/`127.0.0.1` ports `5170-5179`.
+FastAPI local CORS is enabled in `backend/app/main.py` for Vite dev origins on `localhost`/`127.0.0.1` port `2020`.
 
 If the frontend loads but shows mock/empty data:
 
-1. Check `http://localhost:8000/health`.
+1. Check `http://localhost:2030/health`.
 2. Sign in first; `/transcripts`, `/signals`, `/pipeline-runs`, `/review`, and `/exports` require bearer authentication.
 3. Check `GET /auth/me` and confirm the stored token is valid.
-4. Check `http://localhost:8000/transcripts` with the bearer token.
+4. Check `http://localhost:2030/transcripts` with the bearer token.
 5. Confirm the backend database has rows; import artifacts if needed.
 6. Check browser network/CORS errors.
 7. Confirm `VITE_API_BASE` points to the running backend.
 
 If login fails with "Unable to sign in":
 
-1. Confirm the backend running at `VITE_API_BASE` includes the current `/auth/login` route; an older backend on port `8000` will fail.
+1. Confirm the backend running at `VITE_API_BASE` includes the current `/auth/login` route; an older backend on port `8000` or any other stale port will fail.
 2. Confirm CORS allows the current Vite port.
 3. Confirm the username is `curtis` and use the owner-provided local password.
 
@@ -218,7 +218,7 @@ Run from `frontend/`:
 
 ```powershell
 npm install
-npm run dev -- --host 0.0.0.0
+npm run dev -- --host 0.0.0.0 --port 2020
 npm run lint
 npm run build
 ```
@@ -233,7 +233,7 @@ docker compose build frontend
 docker compose up -d backend worker frontend
 ```
 
-Open `http://localhost:5173`.
+Open `http://localhost:2020`.
 
 ## Checklist
 

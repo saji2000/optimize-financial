@@ -107,7 +107,7 @@ export function PipelineRunPage() {
                 )}
                 {i === steps.length - 1 && (
                   <div className="pipe__final">
-                    <span className="eyebrow">Output</span> Agent 5 produced{" "}
+                    <span className="eyebrow">Output</span> Final formatting produced{" "}
                     <b>{transcript.drivers}</b> drivers and <b>{transcript.blockers}</b> blockers ·{" "}
                     <button
                       className="link"

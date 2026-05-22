@@ -6,7 +6,7 @@ import { useAuth } from "../auth/AuthProvider";
 
 function Ticker() {
   const lines: [string, string, string][] = [
-    ["00:12:04", "TR-2041", "Agent 5 final formatting complete"],
+    ["00:12:04", "TR-2041", "Deterministic final formatting complete"],
     ["00:11:58", "TR-2041", "Evidence validation 8/8 passed"],
     ["00:11:42", "TR-2041", "Consolidation 5 drivers, 3 blockers"],
     ["00:10:55", "TR-2040", "Approved 6 signals"],
@@ -76,14 +76,14 @@ export function LoginPage() {
         </div>
 
         <form className={"login__card " + (shake ? "shake" : "")} onSubmit={submit}>
-          <div className="eyebrow">Internal Review / Agent 5</div>
+          <div className="eyebrow">Internal Review / Final Signals</div>
           <h1 className="login__title">
             Sign in to review
             <br />
             today's transcripts.
           </h1>
           <p className="login__lede">
-            Inspect Agent 5 output, verify evidence, and approve final drivers and blockers
+            Inspect final signals, verify evidence, and approve final drivers and blockers
             before they are surfaced to business users.
           </p>
 
@@ -116,7 +116,7 @@ export function LoginPage() {
         </form>
 
         <footer className="login__foot">
-          <span>v0.4.1 / Agent 5 pipeline</span>
+          <span>v0.4.1 / signal extraction pipeline</span>
           <span>Internal use only</span>
         </footer>
       </div>

@@ -19,7 +19,7 @@ def test_import_agent_artifacts_imports_final_signals_and_matching_turns(
     (base_path / "transcript-preparation").mkdir(parents=True)
     final_envelope = {
         "transcript_id": "call_001",
-        "agent_name": "FinalFormattingAgent",
+        "agent_name": "FinalFormatter",
         "pipeline_step": "final_formatting",
         "created_at": "2026-05-20T12:00:00Z",
         "output_schema": "FinalSignal[]",

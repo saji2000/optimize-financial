@@ -1,11 +1,12 @@
 import logging
+from contextlib import contextmanager
 from typing import Any
 
 from app.llm.openai_client import OpenAIClient
 from app.pipeline.orchestrator import PipelineOrchestrator
 from app.pipeline.agents.consolidation_ranking_agent import ConsolidationRankingAgent
 from app.pipeline.agents.evidence_validation_agent import EvidenceValidationAgent
-from app.pipeline.agents.final_formatting_agent import FinalFormattingAgent
+from app.pipeline.agents.final_formatting_agent import FinalFormatter
 from app.pipeline.agents.signal_extraction_agent import SignalExtractionAgent
 from app.pipeline.schemas import (
     CandidateSignal,
@@ -108,7 +109,7 @@ def test_pipeline_orchestrator_extracts_supported_advisor_signals(monkeypatch) -
         ]
 
     def fake_final_formatting_run(
-        self: FinalFormattingAgent,
+        self: FinalFormatter,
         validated_candidates: list[ValidatedSignal],
     ) -> list[FinalSignal]:
         return [
@@ -132,7 +133,7 @@ def test_pipeline_orchestrator_extracts_supported_advisor_signals(monkeypatch) -
         fake_consolidation_ranking_run,
     )
     monkeypatch.setattr(EvidenceValidationAgent, "run", fake_evidence_validation_run)
-    monkeypatch.setattr(FinalFormattingAgent, "run", fake_final_formatting_run)
+    monkeypatch.setattr(FinalFormatter, "run", fake_final_formatting_run)
     transcript = """
 00:01:00 Optimize Rep: Our platform has a modern client portal.
 00:01:15 Advisor: The technology at my current firm is slow and clients complain about the portal.
@@ -157,6 +158,8 @@ def test_pipeline_orchestrator_extracts_supported_advisor_signals(monkeypatch) -
 
 
 def test_pipeline_orchestrator_writes_all_agent_outputs_in_order(monkeypatch) -> None:
+    run_order: list[str] = []
+
     def fake_signal_extraction_run(
         self: SignalExtractionAgent, prepared: PreparedTranscript
     ) -> list[CandidateSignal]:
@@ -183,6 +186,7 @@ def test_pipeline_orchestrator_writes_all_agent_outputs_in_order(monkeypatch) ->
         ranked_candidates: list[RankedSignal],
         prepared_transcript: PreparedTranscript | None = None,
     ) -> list[ValidatedSignal]:
+        run_order.append("evidence_validation")
         return [
             ValidatedSignal(
                 **candidate.model_dump(),
@@ -192,9 +196,10 @@ def test_pipeline_orchestrator_writes_all_agent_outputs_in_order(monkeypatch) ->
         ]
 
     def fake_final_formatting_run(
-        self: FinalFormattingAgent,
+        self: FinalFormatter,
         validated_candidates: list[ValidatedSignal],
     ) -> list[FinalSignal]:
+        run_order.append("final_formatting")
         return [
             FinalSignal(
                 transcript_id=candidate.transcript_id,
@@ -216,7 +221,7 @@ def test_pipeline_orchestrator_writes_all_agent_outputs_in_order(monkeypatch) ->
         fake_consolidation_ranking_run,
     )
     monkeypatch.setattr(EvidenceValidationAgent, "run", fake_evidence_validation_run)
-    monkeypatch.setattr(FinalFormattingAgent, "run", fake_final_formatting_run)
+    monkeypatch.setattr(FinalFormatter, "run", fake_final_formatting_run)
     writer = RecordingAgentOutputWriter()
     transcript = "00:01:00 Advisor: I need stronger operations support."
 
@@ -241,6 +246,9 @@ def test_pipeline_orchestrator_writes_all_agent_outputs_in_order(monkeypatch) ->
         "critic-agent",
         "final-formatter",
     ]
+    assert writer.calls[-1]["agent_name"] == "FinalFormatter"
+    assert writer.calls[-1]["pipeline_step"] == "final_formatting"
+    assert run_order == ["evidence_validation", "final_formatting"]
     assert [call["output_schema"] for call in writer.calls] == [
         "PreparedTranscript",
         "CandidateSignal[]",
@@ -248,6 +256,41 @@ def test_pipeline_orchestrator_writes_all_agent_outputs_in_order(monkeypatch) ->
         "ValidatedSignal[]",
         "FinalSignal[]",
     ]
+
+
+def test_pipeline_orchestrator_wraps_each_stage_in_sentry_span(monkeypatch) -> None:
+    spans = []
+
+    @contextmanager
+    def fake_pipeline_stage_span(**kwargs):
+        spans.append(kwargs)
+        yield
+
+    monkeypatch.setattr(
+        "app.pipeline.orchestrator.pipeline_stage_span",
+        fake_pipeline_stage_span,
+    )
+    orchestrator = PipelineOrchestrator(
+        agent_output_writer=NoopAgentOutputWriter(),
+        record_usage=False,
+        pipeline_run_id="run_sanitized",
+    )
+
+    result = orchestrator.run("call_001", "")
+
+    assert result["status"] == "completed"
+    assert [
+        (span["agent_name"], span["pipeline_step"], span["pipeline_run_id"])
+        for span in spans
+    ] == [
+        ("TranscriptPreparationAgent", "transcript_preparation", "run_sanitized"),
+        ("SignalExtractionAgent", "signal_extraction", "run_sanitized"),
+        ("ConsolidationRankingAgent", "consolidation_ranking", "run_sanitized"),
+        ("EvidenceValidationAgent", "evidence_validation", "run_sanitized"),
+        ("FinalFormatter", "final_formatting", "run_sanitized"),
+    ]
+    assert all(span["transcript_id"] == "call_001" for span in spans)
+    assert "Advisor" not in str(spans)
 
 
 def test_pipeline_orchestrator_writer_failure_logs_warning_and_continues(
@@ -289,7 +332,7 @@ def test_pipeline_orchestrator_writer_failure_logs_warning_and_continues(
         ]
 
     def fake_final_formatting_run(
-        self: FinalFormattingAgent,
+        self: FinalFormatter,
         validated_candidates: list[ValidatedSignal],
     ) -> list[FinalSignal]:
         return [
@@ -313,7 +356,7 @@ def test_pipeline_orchestrator_writer_failure_logs_warning_and_continues(
         fake_consolidation_ranking_run,
     )
     monkeypatch.setattr(EvidenceValidationAgent, "run", fake_evidence_validation_run)
-    monkeypatch.setattr(FinalFormattingAgent, "run", fake_final_formatting_run)
+    monkeypatch.setattr(FinalFormatter, "run", fake_final_formatting_run)
     transcript = "00:01:00 Advisor: I need stronger operations support."
 
     with caplog.at_level(logging.WARNING):
@@ -339,9 +382,5 @@ def test_pipeline_orchestrator_can_disable_usage_recording() -> None:
     assert orchestrator.consolidation_ranking_agent.llm_client.usage_recorder is None
     assert isinstance(orchestrator.evidence_validation_agent.llm_client, OpenAIClient)
     assert orchestrator.evidence_validation_agent.llm_client.usage_recorder is None
-    assert isinstance(orchestrator.final_formatting_agent.llm_client, OpenAIClient)
-    assert orchestrator.final_formatting_agent.llm_client.usage_recorder is None
-    assert (
-        orchestrator.final_formatting_agent.llm_client
-        is orchestrator.signal_extraction_agent.llm_client
-    )
+    assert isinstance(orchestrator.final_formatting_agent, FinalFormatter)
+    assert not hasattr(orchestrator.final_formatting_agent, "llm_client")

@@ -361,7 +361,7 @@ export const pipelineSteps: PipelineStep[] = [
   { step: 2, name: "Segment signal extraction",  status: "ok", model: "sonnet-4-5", prompt: "extract@v5.1", retries: 1, latency: "11.4s", tokensIn: 88240, tokensOut: 6010, cost: 0.1822 },
   { step: 3, name: "Consolidation & ranking",    status: "ok", model: "sonnet-4-5", prompt: "consol@v2.0",  retries: 0, latency: "6.8s",  tokensIn: 41200, tokensOut: 2811, cost: 0.0904 },
   { step: 4, name: "Evidence validation",        status: "ok", model: "haiku-4-5",  prompt: "verify@v1.4",  retries: 0, latency: "3.1s",  tokensIn: 28010, tokensOut: 1480, cost: 0.0612 },
-  { step: 5, name: "Final formatting (Agent 5)", status: "ok", model: "sonnet-4-5", prompt: "final@v4.0",   retries: 0, latency: "2.4s",  tokensIn: 8360,  tokensOut: 869,  cost: 0.0380 },
+  { step: 5, name: "Deterministic final formatting", status: "ok", model: "No model recorded", prompt: "No prompt recorded", retries: 0, latency: "Not tracked", tokensIn: 0, tokensOut: 0, cost: 0 },
 ];
 
 export const activity: ActivityEntry[] = [
