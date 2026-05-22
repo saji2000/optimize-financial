@@ -13,6 +13,7 @@ coverage/
 *.log
 data/transcripts
 data/outputs
+backend/app/security/
 
 
 # Local-only transcript material. Keep real/confidential transcripts out of git.
