@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" aria-label="Optimize Financial">
+  <rect x="2" y="2" width="60" height="60" rx="12" fill="oklch(0.22 0.04 250)" />
+  <circle cx="32" cy="32" r="20" stroke="oklch(0.985 0.005 85)" stroke-width="2.5" fill="none" />
+  <path d="M32 12 L36 32 L32 52 L28 32 Z" fill="oklch(0.985 0.005 85)" />
+  <circle cx="32" cy="32" r="2.2" fill="oklch(0.22 0.04 250)" />
+</svg>
