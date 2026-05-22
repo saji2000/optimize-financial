@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: advisor
       POSTGRES_PASSWORD: advisor
     ports:
-      - "2040:5432"
+      - "127.0.0.1:2040:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -14,7 +14,7 @@ services:
   redis:
     image: redis:7
     ports:
-      - "2050:6379"
+      - "127.0.0.1:2050:6379"
 
   backend:
     build:
@@ -29,7 +29,7 @@ services:
       - postgres
       - redis
     ports:
-      - "2030:2030"
+      - "127.0.0.1:2030:2030"
     volumes:
       - ./backend:/app/backend
       - ./shared:/app/shared
@@ -58,9 +58,10 @@ services:
     depends_on:
       - backend
     environment:
-      VITE_API_BASE: http://localhost:2030
+      VITE_API_BASE: ${VITE_API_BASE:-http://localhost:2030}
+      VITE_DATA_MODE: ${VITE_DATA_MODE:-hybrid}
     ports:
-      - "2020:2020"
+      - "127.0.0.1:2020:2020"
     volumes:
       - ./frontend:/app/frontend
       - /app/frontend/node_modules
