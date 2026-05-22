@@ -51,7 +51,7 @@ export function ExportsPage() {
     <>
       <TopBar
         title="Exports"
-        subtitle="Agent 5 final schema only · earlier agents stay internal"
+        subtitle="Final public schema only · earlier pipeline stages stay internal"
       />
       <div className="grid-2 grid-2--asym">
         <Section eyebrow="Configure" title="Export the public final schema">

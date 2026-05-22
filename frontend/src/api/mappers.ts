@@ -79,7 +79,7 @@ export function pipelineStepsForRun(
 ): PipelineStep[] {
   if (!run) return fallbackSteps;
   if (run.usage_by_step.length > 0) {
-    return run.usage_by_step.map(mapUsageStep);
+    return withDeterministicFinalFormattingStep(run.usage_by_step.map(mapUsageStep));
   }
   const failed = run.status === "failed";
   return fallbackSteps.map((step) => ({
@@ -137,7 +137,29 @@ function stepNameFor(pipelineStep: string, agentName: string) {
     segment_signal_extraction: "Segment signal extraction",
     consolidation_ranking: "Consolidation & ranking",
     evidence_validation: "Evidence validation",
-    final_formatting: "Final formatting (Agent 5)",
+    final_formatting: "Deterministic final formatting",
   };
   return names[pipelineStep] || agentName || pipelineStep;
+}
+
+function withDeterministicFinalFormattingStep(steps: PipelineStep[]): PipelineStep[] {
+  if (steps.some((step) => step.step === 5)) {
+    return steps.sort((a, b) => a.step - b.step);
+  }
+  const deterministicFinalStep: PipelineStep = {
+    step: 5,
+    name: "Deterministic final formatting",
+    status: "ok",
+    model: "No model recorded",
+    prompt: "No prompt recorded",
+    retries: 0,
+    latency: "Not tracked",
+    tokensIn: 0,
+    tokensOut: 0,
+    cost: 0,
+  };
+  return [
+    ...steps,
+    deterministicFinalStep,
+  ].sort((a, b) => a.step - b.step);
 }

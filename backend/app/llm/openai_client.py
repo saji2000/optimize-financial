@@ -9,6 +9,7 @@ from openai import OpenAI
 from pydantic import BaseModel
 
 from app.core.config import settings
+from app.core.sentry import llm_observability_attributes, record_llm_observability
 from app.llm.pricing import estimate_openai_cost_usd
 from app.services.llm_usage_service import LLMUsageEventCreate
 
@@ -131,6 +132,8 @@ class OpenAIClient:
                 self._record_usage(
                     context=context,
                     model=model,
+                    endpoint=endpoint,
+                    service_tier=service_tier,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     latency_ms=latency_ms,
@@ -146,6 +149,8 @@ class OpenAIClient:
             self._record_usage(
                 context=context,
                 model=model,
+                endpoint=endpoint,
+                service_tier=service_tier,
                 input_tokens=last_input_tokens,
                 output_tokens=last_output_tokens,
                 latency_ms=latency_ms,
@@ -280,6 +285,8 @@ class OpenAIClient:
         *,
         context: LLMCallContext,
         model: str,
+        endpoint: OpenAIEndpoint,
+        service_tier: ServiceTier,
         input_tokens: int,
         output_tokens: int,
         latency_ms: int,
@@ -287,14 +294,34 @@ class OpenAIClient:
         status: str,
         error_type: str | None,
     ) -> None:
-        if self.usage_recorder is None:
-            return
-
         input_cost, output_cost, total_cost = estimate_openai_cost_usd(
             model=model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
         )
+        record_llm_observability(
+            attributes=llm_observability_attributes(
+                pipeline_run_id=context.pipeline_run_id,
+                transcript_id=context.transcript_id,
+                chunk_id=context.chunk_id,
+                agent_name=context.agent_name,
+                pipeline_step=context.pipeline_step,
+                model=model,
+                prompt_version=context.prompt_version,
+                endpoint=endpoint,
+                service_tier=service_tier,
+                status=status,
+                error_type=error_type,
+            ),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            latency_ms=latency_ms,
+            retry_count=retry_count,
+            cost_usd=total_cost,
+        )
+        if self.usage_recorder is None:
+            return
+
         self.usage_recorder.record(
             LLMUsageEventCreate(
                 pipeline_run_id=context.pipeline_run_id,

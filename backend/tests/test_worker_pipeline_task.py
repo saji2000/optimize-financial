@@ -100,8 +100,14 @@ def test_worker_failure_persists_sanitized_error_metadata(
     db_session_factory: sessionmaker[Session],
     monkeypatch,
 ) -> None:
+    captured = []
     monkeypatch.setattr(tasks, "SessionLocal", db_session_factory)
     monkeypatch.setattr(tasks, "PipelineOrchestrator", FailingOrchestrator)
+    monkeypatch.setattr(
+        tasks,
+        "capture_sanitized_exception",
+        lambda error, **kwargs: captured.append({"error": error, **kwargs}),
+    )
     with db_session_factory() as db:
         transcript = TranscriptRepository(db).create(
             title="Sanitized call",
@@ -125,3 +131,10 @@ def test_worker_failure_persists_sanitized_error_metadata(
         assert transcript.error_type == "RuntimeError"
         assert run.error_message == "Pipeline failed with RuntimeError."
         assert "SECRET" not in transcript.error_message
+
+    assert len(captured) == 1
+    assert captured[0]["pipeline_run_id"] == run_id
+    assert captured[0]["transcript_id"] == transcript_id
+    assert captured[0]["agent_name"] == "PipelineOrchestrator"
+    assert captured[0]["pipeline_step"] == "worker_task"
+    assert "SECRET" not in str({key: value for key, value in captured[0].items() if key != "error"})

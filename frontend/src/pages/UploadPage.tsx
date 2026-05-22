@@ -137,7 +137,7 @@ export function UploadPage() {
               />
               browse files
             </label>{" "}
-            - we kick off Agent 1 to Agent 5 automatically
+            - we kick off the full 5-step pipeline automatically
           </div>
           <div className="drop__rules small slate">
             <span>UTF-8 - plain text</span>

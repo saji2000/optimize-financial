@@ -3,10 +3,15 @@ from typing import Any
 
 from pydantic_core import PydanticSerializationError
 
+from app.core.sentry import pipeline_stage_span
 from app.llm.openai_client import OpenAIClient
 from app.pipeline.agents.consolidation_ranking_agent import ConsolidationRankingAgent
 from app.pipeline.agents.evidence_validation_agent import EvidenceValidationAgent
-from app.pipeline.agents.final_formatting_agent import FinalFormattingAgent
+from app.pipeline.agents.final_formatting_agent import (
+    FINAL_FORMATTING_AGENT_NAME,
+    FINAL_FORMATTING_PIPELINE_STEP,
+    FinalFormatter,
+)
 from app.pipeline.agents.signal_extraction_agent import SignalExtractionAgent
 from app.pipeline.agents.transcript_preparation_agent import TranscriptPreparationAgent
 from app.pipeline.agent_output_writer import AgentOutputWriter
@@ -37,11 +42,9 @@ class PipelineOrchestrator:
             llm_client=llm_client,
             pipeline_run_id=pipeline_run_id,
         )
-        self.final_formatting_agent = FinalFormattingAgent(
-            llm_client=llm_client,
-            pipeline_run_id=pipeline_run_id,
-        )
+        self.final_formatting_agent = FinalFormatter()
         self.agent_output_writer = agent_output_writer or AgentOutputWriter()
+        self.pipeline_run_id = pipeline_run_id
 
     def run(
         self,
@@ -59,7 +62,13 @@ class PipelineOrchestrator:
         return self.run_outputs(transcript_id=transcript_id, raw_text=raw_text).final_signals
 
     def run_outputs(self, transcript_id: str, raw_text: str) -> PipelineOutputs:
-        prepared = self.transcript_preparation_agent.run(transcript_id, raw_text)
+        with pipeline_stage_span(
+            pipeline_run_id=self.pipeline_run_id,
+            transcript_id=transcript_id,
+            agent_name="TranscriptPreparationAgent",
+            pipeline_step="transcript_preparation",
+        ):
+            prepared = self.transcript_preparation_agent.run(transcript_id, raw_text)
         self._write_agent_output(
             transcript_id=transcript_id,
             agent_folder="transcript-preparation",
@@ -69,7 +78,13 @@ class PipelineOrchestrator:
             output=prepared,
         )
 
-        candidates = self.signal_extraction_agent.run(prepared)
+        with pipeline_stage_span(
+            pipeline_run_id=self.pipeline_run_id,
+            transcript_id=transcript_id,
+            agent_name="SignalExtractionAgent",
+            pipeline_step="signal_extraction",
+        ):
+            candidates = self.signal_extraction_agent.run(prepared)
         self._write_agent_output(
             transcript_id=transcript_id,
             agent_folder="signal-extraction",
@@ -79,7 +94,13 @@ class PipelineOrchestrator:
             output=candidates,
         )
 
-        ranked = self.consolidation_ranking_agent.run(candidates)
+        with pipeline_stage_span(
+            pipeline_run_id=self.pipeline_run_id,
+            transcript_id=transcript_id,
+            agent_name="ConsolidationRankingAgent",
+            pipeline_step="consolidation_ranking",
+        ):
+            ranked = self.consolidation_ranking_agent.run(candidates)
         self._write_agent_output(
             transcript_id=transcript_id,
             agent_folder="ranking-agent",
@@ -89,7 +110,13 @@ class PipelineOrchestrator:
             output=ranked,
         )
 
-        validated = self.evidence_validation_agent.run(ranked, prepared)
+        with pipeline_stage_span(
+            pipeline_run_id=self.pipeline_run_id,
+            transcript_id=transcript_id,
+            agent_name="EvidenceValidationAgent",
+            pipeline_step="evidence_validation",
+        ):
+            validated = self.evidence_validation_agent.run(ranked, prepared)
         self._write_agent_output(
             transcript_id=transcript_id,
             agent_folder="critic-agent",
@@ -99,12 +126,18 @@ class PipelineOrchestrator:
             output=validated,
         )
 
-        final_signals = self.final_formatting_agent.run(validated)
+        with pipeline_stage_span(
+            pipeline_run_id=self.pipeline_run_id,
+            transcript_id=transcript_id,
+            agent_name=FINAL_FORMATTING_AGENT_NAME,
+            pipeline_step=FINAL_FORMATTING_PIPELINE_STEP,
+        ):
+            final_signals = self.final_formatting_agent.run(validated)
         self._write_agent_output(
             transcript_id=transcript_id,
             agent_folder="final-formatter",
-            agent_name="FinalFormattingAgent",
-            pipeline_step="final_formatting",
+            agent_name=FINAL_FORMATTING_AGENT_NAME,
+            pipeline_step=FINAL_FORMATTING_PIPELINE_STEP,
             output_schema="FinalSignal[]",
             output=final_signals,
         )
