@@ -21,3 +21,7 @@ data/sample_transcripts/*
 !data/sample_transcripts/synthetic_recruiting_call.txt
 data/sample_outputs/*
 !data/sample_outputs/README.md
+
+# VPS-local TLS/ACME state. Do not commit private keys or challenge files.
+certbot/
+infra/nginx/acme/

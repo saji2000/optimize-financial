@@ -216,3 +216,114 @@ npm run build
 ```
 
 For visible frontend changes, open the app, sign in with the demo form, and click through Dashboard, Transcripts, Transcript Detail, Signal Review, Exports, Pipeline, Analytics, and Upload.
+
+## VPS Public Hosting
+
+The production-style VPS deployment for `optimize.sajaddaneshmand.com` uses Docker Compose for app services and host-level Nginx as the public reverse proxy.
+
+Recommended shape on the VPS:
+
+- Keep Compose service ports bound to `127.0.0.1`, not all interfaces:
+  - `127.0.0.1:2040:5432` for Postgres.
+  - `127.0.0.1:2050:6379` for Redis.
+  - `127.0.0.1:2030:2030` for FastAPI.
+  - `127.0.0.1:2020:2020` for Vite.
+- Put public traffic through host Nginx, not directly to Docker-published ports.
+- Use `VITE_API_BASE=/api` in the VPS `.env`; browser-side API calls must stay on the public domain. Do not leave `VITE_API_BASE=http://localhost:2030` for public hosting because that points at the visitor machine.
+- Keep `VITE_DATA_MODE=hybrid` unless intentionally switching to backend-only or mock-only behavior.
+- Add the public domain to Vite dev server allowed hosts:
+  - `server.allowedHosts: ["optimize.sajaddaneshmand.com"]` in `frontend/vite.config.ts`.
+  - Without this, Vite returns `Blocked request. This host (...) is not allowed.` behind Nginx.
+
+Current host Nginx config is tracked as a template at:
+
+- `infra/nginx/optimize.sajaddaneshmand.com.host.conf`
+
+Install/update it on the VPS with:
+
+```bash
+sudo install -m 0644 infra/nginx/optimize.sajaddaneshmand.com.host.conf /etc/nginx/sites-available/optimize
+sudo install -m 0644 infra/nginx/optimize.sajaddaneshmand.com.host.conf /etc/nginx/sites-enabled/optimize
+sudo nginx -t
+sudo nginx -s reload
+```
+
+Using `install` for `sites-enabled` is a practical fallback when non-interactive `sudo ln -sf` prompts for a password. Nginx includes regular files in `sites-enabled` just as it includes symlinks.
+
+Host Nginx routing:
+
+- HTTP `/.well-known/acme-challenge/` serves from `infra/nginx/acme` for Let's Encrypt webroot validation.
+- HTTP `/` redirects to HTTPS after the certificate exists.
+- HTTPS `/api/` proxies to `http://127.0.0.1:2030/`; the trailing slash strips `/api` before FastAPI receives the request.
+- HTTPS `/` proxies to `http://127.0.0.1:2020/` and passes WebSocket upgrade headers for Vite.
+- `client_max_body_size 50m` supports transcript uploads through Nginx.
+
+VPS startup sequence:
+
+```bash
+docker compose up -d postgres redis
+docker compose run --rm backend python -m alembic upgrade head
+docker compose build backend
+docker compose build frontend
+docker compose up -d backend worker frontend
+```
+
+Validate from the VPS:
+
+```bash
+docker compose ps
+docker compose logs --tail=80 backend
+docker compose logs --tail=120 worker
+curl -I http://127.0.0.1:2020
+curl -sS http://127.0.0.1:2030/health
+curl -I -H "Host: optimize.sajaddaneshmand.com" http://127.0.0.1
+curl -sS -H "Host: optimize.sajaddaneshmand.com" http://127.0.0.1/api/health
+curl -I https://optimize.sajaddaneshmand.com
+curl -sS https://optimize.sajaddaneshmand.com/api/health
+```
+
+Worker validation should show:
+
+```text
+[tasks]
+  . run_transcript_pipeline
+```
+
+TLS behavior learned on this VPS:
+
+- Cloudflare public HTTP can work while public HTTPS returns `HTTP/2 520` if Cloudflare is trying origin HTTPS and the origin has no usable TLS vhost for this domain.
+- Fix by issuing an origin certificate for `optimize.sajaddaneshmand.com` and adding an Nginx `listen 443 ssl http2` server block.
+- A user-local Certbot configuration was used successfully because non-interactive `sudo certbot ...` prompted for a password:
+
+```bash
+mkdir -p infra/nginx/acme certbot/config certbot/work certbot/logs
+certbot certonly --webroot \
+  -w /home/sajad/development/optimize-financial/infra/nginx/acme \
+  -d optimize.sajaddaneshmand.com \
+  --config-dir /home/sajad/development/optimize-financial/certbot/config \
+  --work-dir /home/sajad/development/optimize-financial/certbot/work \
+  --logs-dir /home/sajad/development/optimize-financial/certbot/logs \
+  --non-interactive --agree-tos --register-unsafely-without-email
+```
+
+Certificate paths for this user-local setup:
+
+- `certbot/config/live/optimize.sajaddaneshmand.com/fullchain.pem`
+- `certbot/config/live/optimize.sajaddaneshmand.com/privkey.pem`
+
+Do not commit user-local Certbot state, private keys, or challenge files. Keep these gitignored:
+
+```gitignore
+certbot/
+infra/nginx/acme/
+```
+
+Renewal cron used on the VPS:
+
+```cron
+17 3 * * * certbot renew --config-dir /home/sajad/development/optimize-financial/certbot/config --work-dir /home/sajad/development/optimize-financial/certbot/work --logs-dir /home/sajad/development/optimize-financial/certbot/logs --quiet --deploy-hook "sudo nginx -s reload"
+```
+
+A `certbot renew --dry-run` may fail transiently with a Let's Encrypt staging `rateLimited` / `Service busy; retry later` error even when issuance and live HTTPS are working. Treat that specific response as external/transient and retry later.
+
+Codex note for this VPS: sandboxed commands may fail before execution with `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`. When that happens, rerun the needed command with escalation rather than debugging the application.
