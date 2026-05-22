@@ -31,6 +31,138 @@ data/       Local sanitized samples only (real transcripts are gitignored)
 
 A **bounded, deterministically-orchestrated multi-agent pipeline** — not an autonomous agent loop. Each step has a constrained job, a strict structured-output schema, and code-side guardrails that run after every LLM call.
 
+#### 2.1.1 Agentic workflow
+
+```mermaid
+flowchart TD
+    Raw["Raw Zoom Transcript<br/>WebVTT-style .txt"]:::io
+    A1["<b>Agent 1 · Transcript Preparation</b><br/>Deterministic parser + chunker<br/>~10k token chunks, 800-token overlap<br/><i>no LLM call</i>"]:::deterministic
+    A2["<b>Agent 2 · Signal Extraction</b><br/>1 LLM call per chunk · parallelizable<br/>gpt-5.4 (mid) · Chat Completions<br/>tier = flex · no fallback"]:::midllm
+    A3["<b>Agent 3 · Consolidation + Ranking</b><br/>1 LLM call per transcript<br/>gpt-5.5 (strong) · Responses API<br/>tier = flex · fallback = gpt-5.4"]:::strongllm
+    A4["<b>Agent 4 · Evidence Validation</b><br/>1 LLM call per transcript · the critic<br/>gpt-5.5 (strong) · Responses API<br/>tier = flex · fallback = gpt-5.4"]:::strongllm
+    A5["<b>Agent 5 · Final Formatting</b><br/>Deterministic ranker + serializer<br/>strips internal fields, caps 3 per type<br/><i>no LLM call</i>"]:::deterministic
+    Out["Final Drivers + Blockers<br/>≤3 each, ranked 1..N<br/>quote · timestamp · evidence_strength · rationale"]:::io
+
+    G1["Guardrails: parse + chunk IDs"]:::guard
+    G2["Guardrails: candidate IDs · item_type · max 3"]:::guard
+    G3["Guardrails: unique source · item_type match · contiguous rank"]:::guard
+    G4["Guardrails: validated ∪ rejected = ranked · rank renumber"]:::guard
+    G5["Guardrails: strip validation_notes + source_chunk_id"]:::guard
+
+    Raw --> A1 --> A2 --> A3 --> A4 --> A5 --> Out
+    A1 -.-> G1
+    A2 -.-> G2
+    A3 -.-> G3
+    A4 -.-> G4
+    A5 -.-> G5
+
+    classDef deterministic fill:#d4edda,stroke:#28a745,stroke-width:2px,color:#155724
+    classDef midllm fill:#fff3cd,stroke:#e0a800,stroke-width:2px,color:#856404
+    classDef strongllm fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#721c24
+    classDef io fill:#cce5ff,stroke:#0366d6,stroke-width:2px,color:#004085
+    classDef guard fill:#f1f3f5,stroke:#6c757d,stroke-width:1px,color:#495057,stroke-dasharray: 4 3
+```
+
+Legend — <span style="color:#155724">**green**</span>: deterministic, no LLM · <span style="color:#856404">**amber**</span>: mid-tier model (`gpt-5.4`) · <span style="color:#721c24">**red**</span>: strong model (`gpt-5.5`) with mid-tier fallback · <span style="color:#0366d6">**blue**</span>: pipeline I/O · dashed grey: post-step code-side guardrails.
+
+#### 2.1.2 System architecture (backend + agentic workflow)
+
+```mermaid
+flowchart TB
+    subgraph ClientLayer["Client"]
+        UI["<b>React + TS Review UI</b><br/>frontend/ · Vite · React Router<br/>dashboard · transcript detail · signal review"]:::ui
+    end
+
+    subgraph APILayer["FastAPI — backend/app/api"]
+        Auth["/auth/login<br/>bearer token · PBKDF2"]:::api
+        TxAPI["/transcripts<br/>upload · list · detail"]:::api
+        RunsAPI["/pipeline-runs<br/>status · errors · retries"]:::api
+        UsageAPI["/llm-usage<br/>tokens · cost · model mix"]:::api
+        SignalsAPI["/signals<br/>final + candidates + rejected"]:::api
+    end
+
+    subgraph QueueLayer["Task Queue"]
+        Redis[("<b>Redis</b><br/>Celery broker")]:::infra
+        Celery["<b>Celery Worker</b><br/>run_transcript_pipeline"]:::infra
+    end
+
+    subgraph PipelineLayer["Pipeline — backend/app/pipeline"]
+        Orch["<b>PipelineOrchestrator</b><br/>bounded, deterministic sequencing"]:::infra
+        AOW["AgentOutputWriter<br/>review-artifact JSON (latest only)"]:::infra
+
+        subgraph Agents["5 Bounded Agents"]
+            P1["<b>1 · Transcript Prep</b><br/>deterministic"]:::deterministic
+            P2["<b>2 · Signal Extraction</b><br/>gpt-5.4 mid · per chunk"]:::midllm
+            P3["<b>3 · Consolidation + Ranking</b><br/>gpt-5.5 strong · per transcript"]:::strongllm
+            P4["<b>4 · Evidence Validation</b><br/>gpt-5.5 strong · critic"]:::strongllm
+            P5["<b>5 · Final Formatting</b><br/>deterministic"]:::deterministic
+        end
+
+        Guards["<b>Code-side Guardrails</b><br/>ID validation · rank renumber<br/>max-3 · item_type checks<br/>validated ∪ rejected = ranked"]:::guard
+    end
+
+    subgraph LLMLayer["LLM — backend/app/llm"]
+        OAClient["<b>OpenAIClient</b><br/>retries (60s · 120s · 3x)<br/>fallback · usage tracking<br/>tier mapping flex→flex · standard→default"]:::llm
+        Schemas["structured_outputs.py<br/>strict Pydantic · extra='forbid'"]:::llm
+        OAI(("<b>OpenAI API</b><br/>Chat Completions + Responses")):::external
+    end
+
+    subgraph DataLayer["Persistence"]
+        PG[("<b>PostgreSQL</b><br/>transcripts · candidates · ranked<br/>validated · final · pipeline_runs<br/>llm_usage_events")]:::data
+        FS["<b>Filesystem</b><br/>data/outputs/agents-outputs/<br/>review-only JSON (gitignored)"]:::data
+        Sentry(("Sentry<br/>sanitized errors + spans")):::external
+    end
+
+    UI -->|HTTPS · bearer| Auth
+    UI --> TxAPI
+    UI --> RunsAPI
+    UI --> UsageAPI
+    UI --> SignalsAPI
+
+    TxAPI -->|enqueue only| Redis
+    Redis --> Celery
+    Celery --> Orch
+
+    Orch --> P1 --> P2 --> P3 --> P4 --> P5
+    P1 -.-> Guards
+    P2 -.-> Guards
+    P3 -.-> Guards
+    P4 -.-> Guards
+    P5 -.-> Guards
+
+    P2 --> OAClient
+    P3 --> OAClient
+    P4 --> OAClient
+    OAClient -.uses.-> Schemas
+    OAClient --> OAI
+
+    Orch --> AOW
+    AOW --> FS
+
+    OAClient -->|usage events| PG
+    Orch -->|signals + run status| PG
+    TxAPI --> PG
+    RunsAPI --> PG
+    UsageAPI --> PG
+    SignalsAPI --> PG
+
+    Orch -.spans + breadcrumbs.-> Sentry
+    OAClient -.errors.-> Sentry
+
+    classDef deterministic fill:#d4edda,stroke:#28a745,stroke-width:2px,color:#155724
+    classDef midllm fill:#fff3cd,stroke:#e0a800,stroke-width:2px,color:#856404
+    classDef strongllm fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#721c24
+    classDef ui fill:#d1ecf1,stroke:#17a2b8,stroke-width:2px,color:#0c5460
+    classDef api fill:#cce5ff,stroke:#0366d6,stroke-width:2px,color:#004085
+    classDef infra fill:#e2e3e5,stroke:#495057,stroke-width:2px,color:#212529
+    classDef llm fill:#fde2e4,stroke:#c2185b,stroke-width:2px,color:#6a1b3a
+    classDef data fill:#e2d9f3,stroke:#6f42c1,stroke-width:2px,color:#3d1a72
+    classDef external fill:#fef3c7,stroke:#b45309,stroke-width:2px,color:#78350f
+    classDef guard fill:#f1f3f5,stroke:#6c757d,stroke-width:1px,color:#495057,stroke-dasharray: 4 3
+```
+
+#### 2.1.3 ASCII flow (text fallback)
+
 ```text
 Raw Zoom transcript (.txt, WebVTT-style)
         │
@@ -54,8 +186,7 @@ PipelineOrchestrator
         ├─► [4] EvidenceValidationAgent        1 LLM call per transcript      gpt-5.5  (strong)
         │                                       Responses API   tier=flex       fallback=gpt-5.4
         │
-        └─► [5] FinalFormattingAgent           1 LLM call per transcript      gpt-5.4  (mid)
-                                                Responses API   tier=flex       no fallback
+        └─► [5] FinalFormattingAgent           deterministic ranker/serializer  no LLM
         │
         ▼
 Code-side guardrails  (ID validation, rank renumbering, item_type checks, max-3 per type)
@@ -70,7 +201,7 @@ React review UI    drivers/blockers + advisor quote + timestamp + evidence_stren
 ### 2.2 Why this design
 
 - **Bounded, not autonomous.** The task is narrow and evidence-sensitive. Free-running agent loops trade precision for unpredictable cost and weak auditability — the opposite of what recruiting intelligence needs.
-- **One agent per concern.** Extraction looks locally per chunk, ranking looks globally, validation is the critic, and final formatting only formats. Separating these lets us swap models per step and keeps prompts short and testable.
+- **One agent per concern.** Extraction looks locally per chunk, ranking looks globally, validation is the critic, and final formatting is a deterministic ranker/serializer. Separating these lets us swap models per step (or remove them entirely, as we did for Agent 5) and keeps prompts short and testable.
 - **Structured outputs everywhere.** Every LLM call uses `client.responses.parse(text_format=Model)` or `client.beta.chat.completions.parse(response_format=Model)` against strict Pydantic schemas (`extra="forbid"`). No free-form JSON in production paths.
 - **Code, not the model, enforces invariants.** IDs, max-3-per-type, contiguous ranks, source-`item_type` agreement, and `validated ∪ rejected = ranked` are all enforced after the LLM call.
 
@@ -82,7 +213,7 @@ React review UI    drivers/blockers + advisor quote + timestamp + evidence_stren
 | 2. Extraction | `gpt-5.4` (mid) | Chat Completions | flex | none | Per-chunk, independent, cheap; mid model has enough judgment |
 | 3. Ranking | `gpt-5.5` (strong) | Responses | flex | `gpt-5.4` | Cross-segment prioritization needs strong reasoning; flex is the default cost guardrail |
 | 4. Validation | `gpt-5.5` (strong) | Responses | flex | `gpt-5.4` | False positives are the highest-risk failure; precision premium |
-| 5. Final format | `gpt-5.4` (mid) | Responses | flex | none | Only re-shapes validated output; must not invent |
+| 5. Final format | — | — | — | — | Deterministic ranker/serializer — sorts by `rank`, caps 3 per `item_type`, strips internal fields. No model judgment needed; removes a source of drift in the public output. |
 
 The Chat Completions / Responses split is intentional: `gpt-5.5` was unstable on Chat Completions structured parsing, while it parses reliably through Responses. Model IDs live in `app/core/config.py` and are persisted with every usage event so historical costs and behavior stay explainable across model upgrades.
 
@@ -137,7 +268,7 @@ Output is `{validated_signals, rejected_signals}`. Code-side guardrails require 
 
 - **Per-chunk parallelism** — Agent 2 is embarrassingly parallel; in production it can fan out across worker concurrency.
 - **Worker isolation** — API routes only enqueue Celery tasks; the worker pool scales independently of the API.
-- **Tiered models** — Agent 2 / Agent 5 already run on the cheaper mid-tier model; only Agents 3 and 4 use the strong reasoning model.
+- **Tiered models** — Agent 2 runs on the cheaper mid-tier model; Agent 5 is fully deterministic (no LLM); only Agents 3 and 4 use the strong reasoning model.
 - **Bounded retries with fallback** — the centralized client retries transient errors (429 / 5xx / timeout / connection) with **60 s, then 120 s** backoff (3 attempts). After primary retries exhaust on transient errors, Agents 3 and 4 try the mid-tier fallback model. Never retries/fallbacks on `BadRequestError` or `ValidationError` — those are configuration/schema bugs to fix.
 - **Service tier** — repo-facing `flex` is the default (cheaper, higher tolerated latency); use `standard` only as an explicit override for a latency-sensitive run.
 - **Audit-friendly persistence** — candidates, ranked, validated, rejected, and final signals are all persisted, so re-running a step or re-validating with a new prompt version doesn't require re-running the whole pipeline.
@@ -154,9 +285,9 @@ The exact production prompts live as individual files under [`backend/app/prompt
 | Signal extraction | [`signal_extraction_v1.md`](./backend/app/prompts/signal_extraction_v1.md) | `signal_extraction_v1` |
 | Consolidation + ranking | [`consolidation_ranking_v1.md`](./backend/app/prompts/consolidation_ranking_v1.md) | `consolidation_ranking_v1` |
 | Evidence validation (critic) | [`evidence_validation_v1.md`](./backend/app/prompts/evidence_validation_v1.md) | `evidence_validation_v1` |
-| Final formatting | [`final_formatting_v1.md`](./backend/app/prompts/final_formatting_v1.md) | `final_formatting_v1` |
+| Final formatting (retained for reference — no longer used at runtime) | [`final_formatting_v1.md`](./backend/app/prompts/final_formatting_v1.md) | _n/a (deterministic agent)_ |
 
-Prompt versions are **persisted with every LLM usage record** so a future eval can isolate the effect of a prompt change.
+Prompt versions are **persisted with every LLM usage record** so a future eval can isolate the effect of a prompt change. Iteration history for each prompt lives under [`backend/app/prompts/v2/`](./backend/app/prompts/v2) and [`v3/`](./backend/app/prompts/v3) — `_v1.md` is the production-canonical version.
 
 ### 3.1 Structured output schemas
 
@@ -213,9 +344,9 @@ Input payload (one per chunk):
 }
 ```
 
-### 3.3 OpenAI API call — Agents 3 / 4 / 5 (Responses API structured parsing)
+### 3.3 OpenAI API call — Agents 3 / 4 (Responses API structured parsing)
 
-Used for transcript-level reasoning because `gpt-5.5` is stable on Responses but unstable on Chat Completions structured parsing:
+Used for transcript-level reasoning because `gpt-5.5` is stable on Responses but unstable on Chat Completions structured parsing. Agent 5 is deterministic and does **not** call OpenAI:
 
 ```python
 # backend/app/llm/openai_client.py  (excerpt)
@@ -247,7 +378,7 @@ The model is never trusted to set IDs or enforce invariants. After parsing:
 - Every model-supplied `source_candidate_id` / `source_ranked_signal_id` / `source_validated_signal_id` must exist, be unique, and have an `item_type` that matches its source.
 - Max 3 per `item_type`; ranks renumbered contiguously starting at 1 within each `item_type` after any drops.
 - Agent 4 requires every ranked signal to appear exactly once across `validated_signals ∪ rejected_signals`.
-- Agent 5 strips internal fields (`validation_notes`, `source_chunk_id`) from the public output.
+- Agent 5 (deterministic) groups by `item_type`, sorts by `rank`, caps at 3 per type, renumbers ranks contiguously starting at 1, and strips internal fields (`validation_notes`, `source_chunk_id`) from the public output.
 
 ---
 
@@ -305,8 +436,8 @@ No SME ground truth was available, so this is a candid self-review against the s
 | 2. Signal extraction | **N** (one per non-empty chunk) | Typically 2–6 chunks per 60-minute call at ~10k-token target |
 | 3. Consolidation + ranking | 1 | Skipped (no call) if no candidates |
 | 4. Evidence validation | 1 | Skipped if no ranked signals |
-| 5. Final formatting | 1 | Skipped if no validated signals |
-| **Total** | **N + 3** typical | A 60-minute call ≈ 5–9 LLM calls |
+| 5. Final formatting | 0 | Deterministic — ranks, caps, and serializes validated signals |
+| **Total** | **N + 2** typical | A 60-minute call ≈ 4–8 LLM calls |
 
 Plus up to 2 fallback calls if Agents 3 or 4 exhaust primary retries on a transient error.
 
@@ -315,20 +446,20 @@ Plus up to 2 fallback calls if Agents 3 or 4 exhaust primary retries on a transi
 Order-of-magnitude per 60-minute transcript (real numbers depend on chunking and prompt versions; actuals are tracked per call in `llm_usage_events`):
 
 - Per chunk (Agent 2): ~10k input tokens + ~1–2k output tokens × ~4 chunks.
-- Per transcript (Agents 3 / 4 / 5): ~3–6k input + ~1–3k output each.
-- Strong model (`gpt-5.5`) used only on Agents 3 and 4; cheaper mid model (`gpt-5.4`) on Agents 2 and 5.
+- Per transcript (Agents 3 / 4): ~3–6k input + ~1–3k output each.
+- Strong model (`gpt-5.5`) used only on Agents 3 and 4; cheaper mid model (`gpt-5.4`) on Agent 2; Agents 1 and 5 are deterministic (zero LLM spend).
 
 Cost guardrails:
 
 - `service_tier="flex"` by default — the cheaper tier on every default agent call.
-- Mid-tier model on the two cheapest-to-run steps (extraction and final formatting).
-- Empty-input short-circuit on Agents 3 / 4 / 5 — no LLM call when there's nothing to process.
+- Mid-tier model on the cheapest-to-run extraction step; Agent 5 was moved off the LLM entirely once the formatting step proved to be deterministic ranking + serialization.
+- Empty-input short-circuit on Agents 3 / 4 — no LLM call when there's nothing to process. Agent 5 returns `[]` immediately when validated signals are empty.
 - Pricing version stored with every usage event (`backend/app/llm/pricing.py`), so historical costs survive future price changes.
 
 ### 5.3 Opportunities to swap models
 
 - Agent 2 → can drop to `OPENAI_MODEL_SMALL` per chunk if eval shows acceptable recall.
-- Agent 5 → already mid-tier; could drop to small once schema-only formatting is proven stable.
+- Agent 5 → no model to swap; the step is now a small deterministic function. If a future requirement reintroduces model judgment here (e.g. natural-language summaries), re-add it as a separate, post-deterministic step rather than moving the formatting back into an LLM.
 - Agent 3 / 4 → the strong model is the precision floor; do not downgrade without an SME-labeled eval showing equivalent false-positive rate.
 
 ### 5.4 Error handling, retries, logging
@@ -403,7 +534,7 @@ python scripts\run_evidence_validation_for_ranked.py  ..\data\outputs\agents-out
 python scripts\run_final_formatting_for_validated.py  ..\data\outputs\agents-outputs\critic-agent\example.json
 ```
 
-`--dry-run-input` (Agents 3 / 4 / 5) prints the exact JSON payload sent to OpenAI without making the call — useful for prompt iteration and reproducing model behavior.
+`--dry-run-input` (Agents 3 / 4) prints the exact JSON payload sent to OpenAI without making the call — useful for prompt iteration and reproducing model behavior. Agent 5 does not call OpenAI, so its smoke script just runs the deterministic transform locally.
 
 ---
 
