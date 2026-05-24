@@ -59,7 +59,8 @@ export function mapSignal(dto: SignalRead): Signal {
     timestamp: dto.timestamp || "00:00:00",
     evidence: dto.evidence_strength,
     rationale: dto.rationale,
-    status: "pending",
+    status: dto.review_status ?? "pending",
+    flag: dto.flag ?? false,
   };
 }
 

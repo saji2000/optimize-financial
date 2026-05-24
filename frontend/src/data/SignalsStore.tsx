@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { Signal } from "./mockData";
 import { useData } from "./DataProvider";
+import { updateSignalFeedback } from "../api/client";
+import { DATA_MODE } from "../api/client";
 
 interface SignalsContextValue {
   signals: Signal[];
@@ -32,6 +34,19 @@ export function SignalsProvider({ children }: { children: ReactNode }) {
           },
         };
       });
+
+      if (DATA_MODE !== "mock") {
+        const apiPatch: Record<string, unknown> = {};
+        if ("status" in patch && patch.status !== undefined) {
+          apiPatch.review_status = patch.status;
+        }
+        if ("flag" in patch && patch.flag !== undefined) {
+          apiPatch.flag = patch.flag;
+        }
+        updateSignalFeedback(id, apiPatch).catch((err) => {
+          console.error("Failed to persist signal feedback:", err);
+        });
+      }
     }
     setSignals((arr) => arr.map((s) => (s.id === id ? { ...s, ...patch } : s)));
   }

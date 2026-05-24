@@ -14,7 +14,15 @@
       "Bash(git fetch *)",
       "Bash(git merge *)",
       "Bash(git add *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(Get-ChildItem -Path \"D:\\\\development\\\\optimize-financial\\\\backend\\\\app\\\\api\" -Recurse -File -Filter \"*.py\")",
+      "Bash(Select-Object FullName)",
+      "Bash(Get-ChildItem -Path \"D:\\\\development\\\\optimize-financial\\\\frontend\\\\src\" -Recurse -Directory)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Sort-Object)",
+      "Bash(cd /d \"D:\\\\development\\\\optimize-financial\")",
+      "Bash(python -c \"import dis, importlib.util; spec = importlib.util.spec_from_file_location\\('auth', 'backend/app/security/__pycache__/auth.cpython-311.pyc'\\); mod = importlib.util.module_from_spec\\(spec\\); print\\('Module loaded'\\)\")",
+      "PowerShell(python -c \"import marshal, dis, types; f=open\\('D:/development/optimize-financial/backend/app/security/__pycache__/auth.cpython-311.pyc','rb'\\); f.read\\(16\\); code=marshal.load\\(f\\); [print\\(c.co_name, '->', c.co_varnames[:c.co_argcount]\\) for c in code.co_consts if isinstance\\(c, types.CodeType\\)]\")"
     ]
   }
 }

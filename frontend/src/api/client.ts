@@ -1,8 +1,10 @@
 import {
   AuthUserRead,
+  BulkFeedbackResponse,
   DataMode,
   LoginResponse,
   PipelineRunRead,
+  SignalFeedbackResponse,
   SignalRead,
   TranscriptDetailRead,
   TranscriptRead,
@@ -95,6 +97,29 @@ export function uploadTranscript(file: File) {
     body: data,
   });
 }
+
+export function updateSignalFeedback(
+  signalId: string,
+  patch: { review_status?: string; flag?: boolean; reviewer_notes?: string },
+) {
+  return fetchJson<SignalFeedbackResponse>(
+    `/review/signals/${encodeURIComponent(signalId)}`,
+    { method: "PATCH", body: JSON.stringify(patch) },
+  );
+}
+
+export function bulkUpdateSignalFeedback(payload: {
+  signal_ids: string[];
+  review_status?: string;
+  flag?: boolean;
+  reviewer_notes?: string;
+}) {
+  return fetchJson<BulkFeedbackResponse>("/review/signals", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
 
 function getStoredAccessToken() {
   if (typeof window === "undefined") return null;

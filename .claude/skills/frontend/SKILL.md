@@ -21,10 +21,10 @@ The app now uses a frontend-first hybrid data layer:
 - App auth is real, not demo-only: `src/pages/LoginPage.tsx` submits username/password to the backend, and signed-in users receive a bearer token.
 - The only configured local user is `curtis`. The plaintext password is intentionally not stored in frontend code or documented in repo guidance; the backend verifies it with a salted PBKDF2-SHA256 hash.
 - Non-authenticated users cannot see logged-in pages. `AppShell` checks `AuthProvider.user` before mounting `DataProvider` and `SignalsProvider`.
-- Backend remains the factual source for uploaded transcripts, prepared turns, final Agent-5 signals, and pipeline status.
-- Local demo enrichment preserves polished advisor/client/duration/review metadata for presentation.
+- Backend remains the factual source for uploaded transcripts, prepared turns, final Agent-5 signals, pipeline status, and signal review feedback.
+- Signal review feedback (approve/reject/flag) is persisted to the backend via `PATCH /review/signals/{id}`. The frontend applies optimistic local updates and fires the API call in the background.
+- Local demo enrichment preserves polished advisor/client/duration metadata for presentation.
 - API-backed transcript and pipeline cost/token/call/retry values come from backend `llm_usage_events` aggregates, not demo enrichment.
-- No backend schema changes were introduced for enrichment/review metadata.
 
 Default local mode:
 
@@ -75,8 +75,13 @@ Stack:
 - `GET /transcripts`
 - `GET /transcripts/{id}`
 - `GET /transcripts/{id}/turns`
-- `GET /signals`
+- `GET /signals` (includes `review_status`, `flag`, `reviewer_notes`, `reviewed_at`, `reviewed_by`)
 - `GET /pipeline-runs`
+
+`SignalsProvider` persists review feedback via:
+
+- `PATCH /review/signals/{id}` — single signal approve/reject/flag update (fires on each `updateSignal` call when `DATA_MODE !== "mock"`).
+- `PATCH /review/signals` — bulk update (available via `bulkUpdateSignalFeedback` in `src/api/client.ts`).
 
 Usage fields:
 
@@ -97,7 +102,7 @@ API helpers automatically attach `Authorization: Bearer <token>` when a stored t
 - `updateSignal(id, patch)`
 - `signalsForTranscript(transcriptId)`
 
-Review status is local-only in this pass. Do not imply backend review persistence until a dedicated endpoint/table exists.
+`updateSignal` applies optimistic local state immediately, then fires `PATCH /review/signals/{id}` to persist the change to the backend. API calls are skipped in `mock` data mode. On API failure, the optimistic local state is kept and the error is logged to the console.
 
 ## Mapping Rules
 
@@ -109,6 +114,8 @@ Backend to frontend:
 - `SignalRead.item_type` -> `Signal.type`.
 - `SignalRead.advisor_quote` -> `Signal.quote`.
 - `SignalRead.evidence_strength` -> `Signal.evidence`.
+- `SignalRead.review_status` -> `Signal.status` (was hardcoded `"pending"`, now reads from API).
+- `SignalRead.flag` -> `Signal.flag` (new field, defaults to `false`).
 - Backend transcript turns -> `TranscriptTurn`.
 - Pipeline step rows for `/pipeline/:id` come from `PipelineRunRead.usage_by_step` when available.
 

@@ -9,16 +9,16 @@ description: "Use as repo knowledge for Optimize Financial backend work: FastAPI
 
 Use this skill for backend implementation work in `D:\development\optimize-financial\backend`.
 
-Backend V1 stores and serves only real pipeline data:
+Backend V1 stores and serves real pipeline data plus reviewer feedback:
 
 - Uploaded transcript raw text and processing status.
 - Prepared Agent-1 transcript turns.
-- Final Agent-5 public signals.
+- Final Agent-5 public signals with reviewer feedback (approve/reject/flag).
 - Pipeline run status and sanitized failures.
 - Existing `llm_usage_events` for LLM call usage, cost, latency, retry, and failure metadata.
 - Aggregated LLM usage read models for transcripts and pipeline runs.
 
-Do not add advisor/client metadata, reviewer workflows, approval state, export readiness, dashboard cosmetics, or rich frontend-only fields unless the user explicitly asks for a later product scope.
+Do not add advisor/client metadata, export readiness, dashboard cosmetics, or rich frontend-only fields unless the user explicitly asks for a later product scope.
 
 For detailed Agent 1-5 behavior, use the repo `agents` skill. This backend skill focuses on API, persistence, worker flow, migrations, scripts, and tests.
 
@@ -61,7 +61,7 @@ Authentication:
 
 ## V1 Database
 
-Current V1 tables are introduced by `backend/migrations/versions/20260520_0002_add_v1_pipeline_tables.py`.
+Current V1 tables are introduced by `backend/migrations/versions/20260520_0002_add_v1_pipeline_tables.py`, with signal feedback columns added in `backend/migrations/versions/20260524_0003_add_signal_feedback_columns.py`.
 
 Use these model files:
 
@@ -75,7 +75,7 @@ V1 table shape:
 
 - `transcripts`: `id`, `title`, `raw_text`, `status`, `created_at`, `updated_at`, sanitized `error_type`, sanitized `error_message`.
 - `transcript_turns`: `id`, `transcript_id`, `sequence`, `timestamp`, `end_timestamp`, `speaker`, `speaker_role`, `text`, `source_chunk_id`.
-- `final_signals`: `id`, `transcript_id`, `item_type`, `rank`, `category`, `advisor_quote`, `timestamp`, `evidence_strength`, `rationale`, `created_at`.
+- `final_signals`: `id`, `transcript_id`, `item_type`, `rank`, `category`, `advisor_quote`, `timestamp`, `evidence_strength`, `rationale`, `created_at`, `review_status`, `flag`, `reviewer_notes`, `reviewed_at`, `reviewed_by`.
 - `pipeline_runs`: `id`, `transcript_id`, `status`, `started_at`, `completed_at`, `created_at`, sanitized `error_type`, sanitized `error_message`.
 - `llm_usage_events`: existing table from `20260519_0001_add_llm_usage_events`; reuse it for V1 analytics.
 
@@ -139,7 +139,20 @@ Implemented V1 routes:
   - Requires bearer authentication.
   - Returns one run plus `usage` and `usage_by_step`, or 404.
 
-Review and export routes are still placeholders. Keep review/export/dashboard-specific backend behavior out of V1 unless the user asks for it.
+- `PATCH /review/signals/{signal_id}`
+  - Requires bearer authentication.
+  - Accepts `SignalFeedbackUpdate`: optional `review_status` (pending/approved/rejected), `flag` (bool), `reviewer_notes` (string).
+  - Updates the signal's feedback columns and sets `reviewed_by` from the authenticated user's username and `reviewed_at` to the current time.
+  - Returns `SignalFeedbackResponse` with the updated feedback fields.
+  - Returns 404 if the signal does not exist.
+
+- `PATCH /review/signals`
+  - Requires bearer authentication.
+  - Accepts `BulkFeedbackUpdate`: `signal_ids` list plus optional `review_status`, `flag`, `reviewer_notes`.
+  - Applies the same update to all found signals.
+  - Returns `BulkFeedbackResponse` with `updated` list and `not_found` list.
+
+Export route is still a placeholder. Keep export/dashboard-specific backend behavior out of V1 unless the user asks for it.
 
 ## Public Schemas
 
@@ -164,9 +177,24 @@ Important public signal shape is `SignalRead` in `backend/app/domain/signal_sche
   "advisor_quote": "I need stronger support.",
   "timestamp": "00:01:00",
   "evidence_strength": "explicit",
-  "rationale": "The advisor states a support need."
+  "rationale": "The advisor states a support need.",
+  "review_status": "pending",
+  "flag": false,
+  "reviewer_notes": null,
+  "reviewed_at": null,
+  "reviewed_by": null
 }
 ```
+
+Review feedback schemas live in `backend/app/domain/review_schema.py`:
+
+- `SignalFeedbackUpdate`: PATCH body with optional `review_status` (`ReviewStatus` enum), `flag`, `reviewer_notes`.
+- `BulkFeedbackUpdate`: PATCH body with `signal_ids` list plus the same optional fields.
+- `SignalFeedbackResponse`: response with `signal_id`, `review_status`, `flag`, `reviewer_notes`, `reviewed_at`, `reviewed_by`.
+- `BulkFeedbackResponse`: response with `updated` list and `not_found` list.
+
+`ReviewStatus` enum (`backend/app/domain/enums.py`): `pending`, `approved`, `rejected`.
+
 
 Do not use the old `signal_type` / `summary` / `evidence_quote` shape for final Agent-5 API output.
 
@@ -323,6 +351,7 @@ Key V1 tests:
 - `backend/tests/test_artifact_import.py`: sanitized artifact import.
 - `backend/tests/test_alembic_migrations.py`: migration chain smoke.
 - `backend/tests/test_api_signals.py`: route-level empty signal listing.
+- `backend/tests/test_signal_feedback.py`: signal feedback PATCH endpoints — approve, reject, flag, 404, bulk update, review fields in GET /signals, persistence across requests.
 
 Existing agent and usage tests remain important:
 

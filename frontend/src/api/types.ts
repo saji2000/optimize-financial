@@ -52,6 +52,25 @@ export interface SignalRead {
   timestamp: string | null;
   evidence_strength: EvidenceKind;
   rationale: string;
+  review_status: "pending" | "approved" | "rejected";
+  flag: boolean;
+  reviewer_notes: string | null;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+}
+
+export interface SignalFeedbackResponse {
+  signal_id: string;
+  review_status: "pending" | "approved" | "rejected";
+  flag: boolean;
+  reviewer_notes: string | null;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+}
+
+export interface BulkFeedbackResponse {
+  updated: SignalFeedbackResponse[];
+  not_found: string[];
 }
 
 export interface TranscriptDetailRead extends TranscriptSummaryRead {
