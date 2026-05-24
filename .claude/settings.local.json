@@ -10,7 +10,11 @@
       "Bash(docker compose *)",
       "Bash(python -m alembic upgrade head)",
       "Bash(python scripts/run_pipeline_v2_for_transcript.py \"D:\\\\development\\\\optimize-financial\\\\data\\\\transcripts\\\\1.txt\" --record-usage --output \"D:\\\\development\\\\optimize-financial\\\\data\\\\outputs\\\\pipeline-results-v2\\\\1-v2.json\")",
-      "Bash(python scripts/run_pipeline_v2_for_transcript.py \"D:\\\\development\\\\optimize-financial\\\\data\\\\transcripts\\\\${n}.txt\" --record-usage --output \"D:\\\\development\\\\optimize-financial\\\\data\\\\outputs\\\\pipeline-results-v2\\\\${n}-v2.json\")"
+      "Bash(python scripts/run_pipeline_v2_for_transcript.py \"D:\\\\development\\\\optimize-financial\\\\data\\\\transcripts\\\\${n}.txt\" --record-usage --output \"D:\\\\development\\\\optimize-financial\\\\data\\\\outputs\\\\pipeline-results-v2\\\\${n}-v2.json\")",
+      "Bash(git fetch *)",
+      "Bash(git merge *)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
     ]
   }
 }
