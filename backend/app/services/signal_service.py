@@ -26,4 +26,9 @@ def final_signal_to_read(signal: FinalSignal) -> SignalRead:
         timestamp=signal.timestamp,
         evidence_strength=signal.evidence_strength,
         rationale=signal.rationale,
+        review_status=signal.review_status,
+        flag=signal.flag,
+        reviewer_notes=signal.reviewer_notes,
+        reviewed_at=signal.reviewed_at,
+        reviewed_by=signal.reviewed_by,
     )

@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from sqlalchemy.orm import Session
 
 from app.db.models.final_signal import FinalSignal
@@ -29,3 +31,33 @@ class SignalRepository:
                 FinalSignal.rank.asc(),
             ).all()
         )
+
+    def get_final_signal(self, signal_id: str) -> FinalSignal | None:
+        return self.db.get(FinalSignal, signal_id)
+
+    def get_final_signals_by_ids(self, signal_ids: list[str]) -> list[FinalSignal]:
+        if not signal_ids:
+            return []
+        return list(
+            self.db.query(FinalSignal).filter(FinalSignal.id.in_(signal_ids)).all()
+        )
+
+    def update_feedback(
+        self,
+        signal: FinalSignal,
+        *,
+        review_status: str | None = None,
+        flag: bool | None = None,
+        reviewer_notes: str | None = None,
+        reviewed_by: str | None = None,
+    ) -> FinalSignal:
+        if review_status is not None:
+            signal.review_status = review_status
+        if flag is not None:
+            signal.flag = flag
+        if reviewer_notes is not None:
+            signal.reviewer_notes = reviewer_notes
+        signal.reviewed_by = reviewed_by
+        signal.reviewed_at = datetime.now(UTC)
+        self.db.flush()
+        return signal

@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -24,3 +24,8 @@ class FinalSignal(Base):
         nullable=False,
         default=lambda: datetime.now(UTC),
     )
+    review_status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    flag: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reviewer_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String, nullable=True)

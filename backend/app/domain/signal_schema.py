@@ -1,6 +1,8 @@
+from datetime import datetime
+
 from pydantic import BaseModel
 
-from app.domain.enums import EvidenceStrength, SignalType
+from app.domain.enums import EvidenceStrength, ReviewStatus, SignalType
 
 
 class SignalCandidate(BaseModel):
@@ -24,3 +26,8 @@ class SignalRead(BaseModel):
     timestamp: str | None = None
     evidence_strength: EvidenceStrength
     rationale: str
+    review_status: ReviewStatus = ReviewStatus.PENDING
+    flag: bool = False
+    reviewer_notes: str | None = None
+    reviewed_at: datetime | None = None
+    reviewed_by: str | None = None
