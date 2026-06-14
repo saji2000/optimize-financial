@@ -1,5 +1,4 @@
 ---
-# SKILL.md — Development Reference
 name: agents
 description: Use as a repo knowledge skill for the Optimize Financial advisor signal extraction pipeline components, especially the bounded multi-step workflow, deterministic Transcript Preparation Agent, orchestration responsibilities, prompt files, structured outputs, evidence validation, auditability, and confidential transcript handling.
 ---
@@ -13,6 +12,15 @@ Use this skill as system knowledge for the advisor signal extraction pipeline. I
 Do not introduce autonomous agent loops or spawn subagents because this skill exists. Preserve deterministic orchestration around narrow, evidence-sensitive LLM or deterministic steps.
 
 The production goal is high-precision extraction of up to three advisor-side drivers and up to three advisor-side blockers from confidential Zoom transcripts. Prefer fewer supported signals over filling every slot.
+
+## LLM Provider
+
+The pipeline is provider-configurable via `settings.llm_provider` (`LLM_PROVIDER` in `.env`), defaulting to `"deepseek"` for cost; `"openai"` stays fully supported and is reachable by flipping that one env var. All OpenAI `.env` values are kept intact.
+
+- Model selection per tier resolves through `settings.active_model` / `active_model_mid` / `active_model_low`, which return the DeepSeek or OpenAI model name for the active provider. The agent "obvious model selection line" now reads from these (e.g. `SIGNAL_EXTRACTION_MODEL = settings.active_model_mid`), not directly from `settings.openai_model*`.
+- DeepSeek defaults (`.env`): high `deepseek-v4-pro`, mid/low `deepseek-v4-flash`. OpenAI defaults remain `gpt-5.5` / `gpt-5.4` / `gpt-5.4-mini`.
+- DeepSeek exposes only the OpenAI-compatible **Chat Completions** API — no Responses API, no `service_tier`, and JSON mode instead of strict `json_schema` parse. The centralized client (`backend/app/llm/openai_client.py`) handles this transparently: when the provider is DeepSeek it routes every call through Chat Completions regardless of an agent's `endpoint`/`service_tier` constants, injects the response model's JSON schema into the system prompt, validates the returned content locally, and reports `endpoint="chat_completions"` for observability. Agents keep their existing `endpoint="responses"` / `service_tier` constants so the OpenAI path is unchanged when the toggle is flipped back.
+- Because DeepSeek JSON mode is not strictly schema-enforced, a malformed response surfaces as a Pydantic `ValidationError`, which (correctly) fails fast with no retry and no model fallback. If real-call adherence is weak, add a `_v2.md` prompt with explicit JSON guidance — never mutate `_v1.md`.
 
 ## Current State
 
@@ -36,7 +44,7 @@ The second agent, `SignalExtractionAgent`, is implemented as an LLM-backed segme
 
 Agent 2 currently uses:
 
-- `SIGNAL_EXTRACTION_MODEL = settings.openai_model_mid` as the obvious model selection line.
+- `SIGNAL_EXTRACTION_MODEL = settings.active_model_mid` as the obvious model selection line (mid tier of the active provider; `deepseek-v4-flash` by default).
 - `backend/app/prompts/signal_extraction_v1.md` as the prompt.
 - `SegmentSignalExtractionResult` in `backend/app/llm/structured_outputs.py` as the strict structured output model.
 - `backend/app/llm/openai_client.py` for OpenAI calls, retries, token usage capture, cost estimation, latency, and sanitized failure usage events.
@@ -49,9 +57,9 @@ The third agent, `ConsolidationRankingAgent`, is implemented as an LLM-backed tr
 
 Agent 3 currently uses:
 
-- `CONSOLIDATION_RANKING_MODEL = settings.openai_model`, which defaults to `OPENAI_MODEL=gpt-5.5`.
-- `CONSOLIDATION_RANKING_FALLBACK_MODEL = settings.openai_model_mid`, which defaults to `OPENAI_MODEL_MID=gpt-5.4`.
-- `CONSOLIDATION_RANKING_SERVICE_TIER = "standard"` as the repo-facing latency/cost choice; `OpenAIClient` sends this to OpenAI as API `service_tier="default"`.
+- `CONSOLIDATION_RANKING_MODEL = settings.active_model` (high tier of the active provider; `deepseek-v4-pro` by default, `gpt-5.5` under OpenAI).
+- `CONSOLIDATION_RANKING_FALLBACK_MODEL = settings.active_model_mid` (mid tier; `deepseek-v4-flash` by default, `gpt-5.4` under OpenAI).
+- `CONSOLIDATION_RANKING_SERVICE_TIER = DEFAULT_SERVICE_TIER` as the repo-facing latency/cost choice, currently `flex`; pass repo-facing `service_tier="standard"` only as an explicit constructor override for a latency-sensitive run.
 - `CONSOLIDATION_RANKING_ENDPOINT = "responses"` because repeated `gpt-5.5` failures were observed on the previous Chat Completions structured parsing path, while `gpt-5.5` completed successfully through `client.responses.parse(...)`.
 - `CONSOLIDATION_RANKING_MAX_OUTPUT_TOKENS = 6000`; the shared 2000-token default could truncate Agent 3's structured JSON on larger candidate sets.
 - `backend/app/prompts/consolidation_ranking_v1.md` as the prompt.
@@ -68,8 +76,8 @@ The fourth agent, `EvidenceValidationAgent`, is implemented as an LLM-backed tra
 
 Agent 4 currently uses:
 
-- `EVIDENCE_VALIDATION_MODEL = settings.openai_model`, which defaults to `OPENAI_MODEL=gpt-5.5`.
-- `EVIDENCE_VALIDATION_FALLBACK_MODEL = settings.openai_model_mid`, which defaults to `OPENAI_MODEL_MID=gpt-5.4`.
+- `EVIDENCE_VALIDATION_MODEL = settings.active_model` (high tier of the active provider; `deepseek-v4-pro` by default, `gpt-5.5` under OpenAI).
+- `EVIDENCE_VALIDATION_FALLBACK_MODEL = settings.active_model_mid` (mid tier; `deepseek-v4-flash` by default, `gpt-5.4` under OpenAI).
 - `EVIDENCE_VALIDATION_SERVICE_TIER = DEFAULT_SERVICE_TIER`, which resolves to repo-facing `flex`.
 - `EVIDENCE_VALIDATION_ENDPOINT = "responses"`.
 - `EVIDENCE_VALIDATION_MAX_OUTPUT_TOKENS = 6000`.
@@ -90,22 +98,21 @@ Agent 4 builds evidence context deterministically:
 
 The Agent 4 implementation includes post-LLM guardrails: unknown `source_ranked_signal_id` values fail, duplicate source ranked signal IDs fail, every ranked signal must appear exactly once across `validated_signals` or `rejected_signals`, item type mismatches between selected output and source ranked signal fail, output is capped at three per type, and kept outputs are renumbered contiguously within each item type. Final `ValidatedSignal` objects copy `transcript_id` and `source_chunk_id` from the selected known source ranked signal, not from model-invented fields.
 
-The fifth agent, `FinalFormattingAgent`, is implemented as an LLM-backed transcript-level formatter in `backend/app/pipeline/agents/final_formatting_agent.py`. It consumes only Agent 4 `ValidatedSignal` objects, formats them into public `FinalSignal` objects, and must not invent, revalidate, merge, split, or add signals.
+The fifth step, `FinalFormatter`, is implemented as a deterministic transcript-level formatter in `backend/app/pipeline/agents/final_formatting_agent.py`. It consumes only Agent 4 `ValidatedSignal` objects, projects them into public `FinalSignal` objects, and must not invent, revalidate, merge, split, or add signals. `FinalFormattingAgent = FinalFormatter` remains as a temporary import-compatibility alias.
 
-Agent 5 currently uses:
+Final formatting currently:
 
-- `FINAL_FORMATTING_MODEL = settings.openai_model_mid`, which defaults to `OPENAI_MODEL_MID=gpt-5.4`.
-- `FINAL_FORMATTING_ENDPOINT = "responses"`.
-- `FINAL_FORMATTING_SERVICE_TIER = DEFAULT_SERVICE_TIER`, which resolves to repo-facing `flex`.
-- `FINAL_FORMATTING_MAX_OUTPUT_TOKENS = 3000`.
-- `backend/app/prompts/final_formatting_v1.md` as the prompt.
-- `FinalFormattingResult` and `FinalSignalOutput` in `backend/app/llm/structured_outputs.py` as strict structured output models.
-- Deterministic validated signal IDs in the LLM payload, shaped as `validated_signal_001`, `validated_signal_002`, and so on.
-- `LLMCallContext.chunk_id = None`, because final formatting is transcript-level.
-- `backend/scripts/run_final_formatting_for_validated.py` for local manual smoke tests against Agent 4 `critic-agent` artifacts or raw `ValidatedSignal[]` JSON.
-- `--dry-run-input` on the smoke script to print the exact Agent 5 JSON payload without calling OpenAI.
+- Calls no LLM, loads no prompt, parses no structured model output, and records no LLM usage row.
+- Preserves `run(validated_signals: list[ValidatedSignal]) -> list[FinalSignal]`.
+- Returns `[]` for empty input.
+- Requires all validated signals to share one `transcript_id`.
+- Preserves public fields exactly and excludes internal fields such as `validation_notes` and `source_chunk_id`.
+- Sorts drivers before blockers, then by existing rank.
+- Re-numbers ranks contiguously within each item type and caps each type at three as a defensive invariant.
+- Keeps the existing `final-formatter` artifact folder, `pipeline_step="final_formatting"`, and `output_schema="FinalSignal[]"`, with `agent_name="FinalFormatter"`.
+- Uses `backend/scripts/run_final_formatting_for_validated.py` for local manual smoke tests against Agent 4 `critic-agent` artifacts or raw `ValidatedSignal[]` JSON.
 
-The Agent 5 implementation includes post-LLM guardrails: unknown `source_validated_signal_id` values fail, duplicate source validated signal IDs fail, item type mismatches between selected output and source validated signal fail, output is capped at three per type, and final outputs are renumbered contiguously within each item type. Final `FinalSignal` objects copy `transcript_id` from the selected known source validated signal, not from model-invented identifiers, and exclude internal fields such as `validation_notes` and `source_chunk_id`.
+`backend/app/prompts/final_formatting_v1.md` may remain only for historical comparison; it is obsolete for current execution.
 
 The orchestrator also writes human-review JSON artifacts after each stage through `backend/app/pipeline/agent_output_writer.py`. This is intentionally orchestrator-owned, not agent-owned, so bounded agent contracts remain pure and in-memory handoffs stay unchanged.
 
@@ -168,7 +175,7 @@ Keep backend boundaries intact:
 
 Review UI integration:
 
-- The frontend consumes only persisted prepared turns and final Agent-5 signals through V1 APIs.
+- The frontend consumes only persisted prepared turns and final public signals through V1 APIs.
 - Demo enrichment in the frontend may add advisor/client/duration/review/cost display metadata, but those fields are not pipeline output and should not be added to agent schemas.
 - Local artifact import can hydrate Postgres for review without rerunning OpenAI: `backend/scripts/import_agent_artifacts.py --base-path ..\data\outputs\agents-outputs`.
 - Artifact import reads `final-formatter/*.json` and matching `transcript-preparation/*.json`; it must not print artifact contents because they may contain confidential transcript-derived data.
@@ -245,9 +252,9 @@ The extraction step identifies candidate signals per chunk only from advisor-sid
 
 Default model strategy:
 
-- Agent 2 defaults to `OPENAI_MODEL_MID` / `settings.openai_model_mid`.
-- Keep the selected model line obvious near the top of `signal_extraction_agent.py`: `SIGNAL_EXTRACTION_MODEL = settings.openai_model_mid`.
-- To manually switch strength/cost, change that one line to `settings.openai_model` or `settings.openai_model_low`.
+- Agent 2 defaults to the mid tier of the active provider via `settings.active_model_mid` (`deepseek-v4-flash` by default; `gpt-5.4` under OpenAI).
+- Keep the selected model line obvious near the top of `signal_extraction_agent.py`: `SIGNAL_EXTRACTION_MODEL = settings.active_model_mid`.
+- To manually switch strength/cost, change that one line to `settings.active_model` or `settings.active_model_low`; to switch providers entirely, set `LLM_PROVIDER` in `.env`.
 
 Extract:
 
@@ -290,11 +297,11 @@ The consolidation step merges candidates across chunks and selects at most three
 
 Default model strategy:
 
-- Agent 3 defaults to `OPENAI_MODEL` / `settings.openai_model`, currently `gpt-5.5`.
-- Keep the selected model line obvious near the top of `consolidation_ranking_agent.py`: `CONSOLIDATION_RANKING_MODEL = settings.openai_model`.
-- Agent 3 fallback defaults to `OPENAI_MODEL_MID` / `settings.openai_model_mid`, currently `gpt-5.4`.
-- Keep the fallback model line obvious near the top of `consolidation_ranking_agent.py`: `CONSOLIDATION_RANKING_FALLBACK_MODEL = settings.openai_model_mid`.
-- Agent 3 defaults to repo-facing `CONSOLIDATION_RANKING_SERVICE_TIER = "standard"`, `CONSOLIDATION_RANKING_ENDPOINT = "responses"`, and `CONSOLIDATION_RANKING_MAX_OUTPUT_TOKENS = 6000`.
+- Agent 3 defaults to the high tier of the active provider via `settings.active_model` (`deepseek-v4-pro` by default; `gpt-5.5` under OpenAI).
+- Keep the selected model line obvious near the top of `consolidation_ranking_agent.py`: `CONSOLIDATION_RANKING_MODEL = settings.active_model`.
+- Agent 3 fallback defaults to the mid tier via `settings.active_model_mid` (`deepseek-v4-flash` by default; `gpt-5.4` under OpenAI).
+- Keep the fallback model line obvious near the top of `consolidation_ranking_agent.py`: `CONSOLIDATION_RANKING_FALLBACK_MODEL = settings.active_model_mid`.
+- Agent 3 defaults to repo-facing `CONSOLIDATION_RANKING_SERVICE_TIER = DEFAULT_SERVICE_TIER`, currently `flex`, `CONSOLIDATION_RANKING_ENDPOINT = "responses"`, and `CONSOLIDATION_RANKING_MAX_OUTPUT_TOKENS = 6000`.
 - The constructor can override the primary model, fallback model, service tier, endpoint, and max output token budget for tests or controlled experiments.
 
 Ranking priorities:
@@ -334,10 +341,10 @@ Treat validation as the precision gate.
 
 Default model strategy:
 
-- Agent 4 defaults to `OPENAI_MODEL` / `settings.openai_model`, currently `gpt-5.5`.
-- Keep the selected model line obvious near the top of `evidence_validation_agent.py`: `EVIDENCE_VALIDATION_MODEL = settings.openai_model`.
-- Agent 4 fallback defaults to `OPENAI_MODEL_MID` / `settings.openai_model_mid`, currently `gpt-5.4`.
-- Keep the fallback model line obvious near the top of `evidence_validation_agent.py`: `EVIDENCE_VALIDATION_FALLBACK_MODEL = settings.openai_model_mid`.
+- Agent 4 defaults to the high tier of the active provider via `settings.active_model` (`deepseek-v4-pro` by default; `gpt-5.5` under OpenAI).
+- Keep the selected model line obvious near the top of `evidence_validation_agent.py`: `EVIDENCE_VALIDATION_MODEL = settings.active_model`.
+- Agent 4 fallback defaults to the mid tier via `settings.active_model_mid` (`deepseek-v4-flash` by default; `gpt-5.4` under OpenAI).
+- Keep the fallback model line obvious near the top of `evidence_validation_agent.py`: `EVIDENCE_VALIDATION_FALLBACK_MODEL = settings.active_model_mid`.
 - Agent 4 defaults to repo-facing `EVIDENCE_VALIDATION_SERVICE_TIER = DEFAULT_SERVICE_TIER`, `EVIDENCE_VALIDATION_ENDPOINT = "responses"`, and `EVIDENCE_VALIDATION_MAX_OUTPUT_TOKENS = 6000`.
 - The constructor can override the primary model, fallback model, service tier, endpoint, and max output token budget for tests or controlled experiments.
 
@@ -364,32 +371,26 @@ Do not copy real transcript text or real extracted call output into tests.
 
 ## Final Formatting
 
-`FinalFormattingAgent.run(validated_candidates: list[ValidatedSignal]) -> list[FinalSignal]` must keep this contract. It should:
+`FinalFormatter.run(validated_signals: list[ValidatedSignal]) -> list[FinalSignal]` must keep this contract. It should:
 
-- Return `[]` without an LLM call when there are no validated signals.
+- Return `[]` when there are no validated signals.
 - Require all validated signals to belong to a single transcript.
-- Make one OpenAI structured-output call for the full transcript validated-signal set through `OpenAIClient` using `client.responses.parse(...)`.
-- Send compact validated signal JSON with deterministic `validated_signal_id` values.
-- Exclude `validation_notes`, `source_chunk_id`, rejected candidates, audit metadata, and usage events from the LLM input and public output.
-- Use `chunk_id=None` in `LLMCallContext`.
-- Populate final `FinalSignal.transcript_id` from the selected source validated signal in code.
-- Call only `backend/app/llm/openai_client.py`, never the OpenAI SDK directly from the agent.
+- Preserve `item_type`, `rank`, `category`, `advisor_quote`, `timestamp`, `evidence_strength`, and `rationale`.
+- Exclude `validation_notes`, `source_chunk_id`, rejected candidates, audit metadata, and usage events from public output.
+- Sort drivers before blockers, then by existing rank.
+- Re-number ranks contiguously per `item_type` and cap each type at three.
+- Avoid any OpenAI client, prompt, structured-output parser, model setting, endpoint, service tier, token budget, or LLM usage context.
 
-Default model strategy:
+Compatibility notes:
 
-- Agent 5 defaults to `OPENAI_MODEL_MID` / `settings.openai_model_mid`, currently `gpt-5.4`.
-- Keep the selected model line obvious near the top of `final_formatting_agent.py`: `FINAL_FORMATTING_MODEL = settings.openai_model_mid`.
-- Agent 5 defaults to repo-facing `FINAL_FORMATTING_SERVICE_TIER = DEFAULT_SERVICE_TIER`, `FINAL_FORMATTING_ENDPOINT = "responses"`, and `FINAL_FORMATTING_MAX_OUTPUT_TOKENS = 3000`.
-- The constructor can override the model, service tier, endpoint, and max output token budget for tests or controlled experiments.
+- Keep the existing `final-formatter` artifact folder, `pipeline_step="final_formatting"`, `output_schema="FinalSignal[]"`, persisted `final_signals`, APIs, exports, and frontend pipeline timeline intact.
+- Use `agent_name="FinalFormatter"` for new final-formatter artifacts.
+- Keep `FinalFormattingAgent = FinalFormatter` only as a temporary alias to avoid brittle import churn.
+- `backend/app/prompts/final_formatting_v1.md` is obsolete and should not be used by current execution.
 
-Agent 5 must not revalidate evidence. It may only perform public-schema formatting and minor cleanup while preserving advisor quotes verbatim. It must not add a signal unless it selects one input `validated_signal_id`.
-
-Use structured outputs and prompt files in `backend/app/prompts/`, especially `final_formatting_v1.md`. The structured output model is `FinalFormattingResult` with `final_signals`; each output includes `source_validated_signal_id`, `item_type`, `rank`, `category`, `advisor_quote`, `timestamp`, `evidence_strength`, and `rationale`. Extra fields are forbidden and enum values must validate.
-
-When changing Agent 5, add or update sanitized mocked-OpenAI tests in:
+When changing final formatting, add or update deterministic tests in:
 
 - `backend/tests/test_final_formatting_agent.py`
-- `backend/tests/test_llm_usage_tracking.py`
 
 Do not copy real transcript text or real extracted call output into tests.
 
@@ -399,7 +400,7 @@ Centralize all OpenAI calls through `backend/app/llm/openai_client.py` so model 
 
 All centralized OpenAI calls must include a repo-facing `service_tier`. The default is `flex` via `DEFAULT_SERVICE_TIER`; future LLM-backed agents should pass that default through unless a specific call is intentionally configured with repo-facing `service_tier="standard"`. `OpenAIClient` maps repo-facing `"standard"` to OpenAI API `"default"`.
 
-`OpenAIClient` supports endpoint selection through `endpoint="chat_completions"` and `endpoint="responses"`. Agent 2 currently uses the default Chat Completions structured parsing path with `messages`. Agents 3, 4, and 5 use the Responses structured parsing path with `instructions`, JSON-string `input`, and `text_format`.
+`OpenAIClient` supports endpoint selection through `endpoint="chat_completions"` and `endpoint="responses"`. Agent 2 uses the Chat Completions structured parsing path with `messages`. Agents 3 and 4 declare the Responses structured parsing path with `instructions`, JSON-string `input`, and `text_format`. Final formatting is deterministic and does not use `OpenAIClient`. Note: these endpoint and `service_tier` selections apply to the OpenAI provider only. When `LLM_PROVIDER=deepseek` (the default), the client ignores them and routes all calls through DeepSeek's Chat Completions JSON-mode path (no `service_tier`); see the "LLM Provider" section. Flipping back to OpenAI restores the endpoints/tier above unchanged.
 
 Persist an LLM usage event per model call in `llm_usage_events`. The current implementation includes:
 
@@ -421,13 +422,13 @@ Each usage event should include:
 
 Keep model IDs, prompt versions, schema versions, temperatures, max output tokens, and pricing versions in configuration or persisted metadata. Do not hardcode pricing in individual agents.
 
-Current pricing config lives in `backend/app/core/config.py` as `openai_model_pricing_usd_per_1m_tokens`; cost calculation lives in `backend/app/llm/pricing.py`. The selected pricing version is `settings.openai_pricing_version`, and each persisted usage event stores that version for reproducibility.
+Current pricing config lives in `backend/app/core/config.py` as `openai_model_pricing_usd_per_1m_tokens`; cost calculation lives in `backend/app/llm/pricing.py`. The table is keyed by model name and covers both providers, so adding a model entry is all that is needed for cost tracking. DeepSeek V4 entries (`deepseek-v4-flash`, `deepseek-v4-pro`) carry a cache-miss `input` rate, a cheaper `input_cache_hit` rate, and an `output` rate; `estimate_openai_cost_usd` splits input cost using the provider's reported cached prompt tokens (DeepSeek `prompt_cache_hit_tokens`, falling back to single-rate when absent, so OpenAI costs are unchanged). The selected pricing version is `settings.openai_pricing_version`, and each persisted usage event stores that version for reproducibility.
 
 The full pipeline can be run locally with `backend/scripts/run_pipeline_for_transcript.py`. It writes per-agent human-review artifacts through the orchestrator. It disables database usage recording by default so local artifact review can run without Postgres; pass `--record-usage` only when Postgres is available and migrations have run.
 
-Agent 2 candidate outputs can also be written locally with `backend/scripts/run_signal_extraction_for_prepared.py --output <path>`. Agent 3 ranked outputs can be written locally with `backend/scripts/run_consolidation_ranking_for_candidates.py --output <path>`. Agent 4 validated outputs can be written locally with `backend/scripts/run_evidence_validation_for_ranked.py --output <path>` or, when run against `data/outputs/agents-outputs/ranking-agent/*.json`, through the standard `critic-agent` artifact writer. Agent 5 final outputs can be written locally with `backend/scripts/run_final_formatting_for_validated.py --output <path>` or, when run against `data/outputs/agents-outputs/critic-agent/*.json`, through the standard `final-formatter` artifact writer. These per-agent smoke scripts disable database usage recording by default and accept `--record-usage`.
+Agent 2 candidate outputs can also be written locally with `backend/scripts/run_signal_extraction_for_prepared.py --output <path>`. Agent 3 ranked outputs can be written locally with `backend/scripts/run_consolidation_ranking_for_candidates.py --output <path>`. Agent 4 validated outputs can be written locally with `backend/scripts/run_evidence_validation_for_ranked.py --output <path>` or, when run against `data/outputs/agents-outputs/ranking-agent/*.json`, through the standard `critic-agent` artifact writer. Deterministic final outputs can be written locally with `backend/scripts/run_final_formatting_for_validated.py --output <path>` or, when run against `data/outputs/agents-outputs/critic-agent/*.json`, through the standard `final-formatter` artifact writer. Agent 2, Agent 3, and Agent 4 smoke scripts disable database usage recording by default and accept `--record-usage`; final formatting never records LLM usage.
 
-If a local run fails with a timeout on `localhost:5432` after an OpenAI call, the OpenAI call likely succeeded and the usage recorder could not connect to Postgres. This is not caused by `service_tier="flex"`; flex can affect OpenAI latency, not database connectivity.
+If a local run fails with a timeout on `localhost:2040` after an OpenAI call, the OpenAI call likely succeeded and the usage recorder could not connect to Postgres. This is not caused by `service_tier="flex"`; flex can affect OpenAI latency, not database connectivity.
 
 `OpenAIClient` retry behavior is intentionally bounded:
 
@@ -446,7 +447,7 @@ Agent 3 and Agent 4 fallback behavior is intentionally narrow:
 - Expect usage tracking to record the attempted model for each call, so a primary failure followed by a fallback success may produce separate usage events when usage recording is enabled.
 - Do not use fallback for `BadRequestError` or Pydantic `ValidationError`; these are configuration/schema/output-budget problems to fix directly. One observed Responses failure was a 400 caused by sending literal `service_tier="standard"`; the fix was mapping repo `standard` to API `default`. Another observed failure was truncated Agent 3 structured JSON with a 2000-token budget; the fix was `CONSOLIDATION_RANKING_MAX_OUTPUT_TOKENS = 6000`.
 
-Agent 5 currently has no fallback model. It relies on the centralized bounded retry behavior in `OpenAIClient`; schema or guardrail failures should fail fast and be fixed directly.
+Final formatting has no fallback model because it makes no model call.
 
 ## Local Setup and Smoke Testing
 
@@ -470,8 +471,8 @@ python -m alembic -c backend\alembic.ini upgrade head
 The root `.env` is intended for host-local development:
 
 ```env
-DATABASE_URL=postgresql+psycopg://advisor:advisor@localhost:5432/advisor_signal_extraction
-REDIS_URL=redis://localhost:6379/0
+DATABASE_URL=postgresql+psycopg://advisor:advisor@localhost:2040/advisor_signal_extraction
+REDIS_URL=redis://localhost:2050/0
 ```
 
 Docker Compose overrides backend and worker service URLs back to Compose service names:
@@ -579,29 +580,14 @@ python -m alembic upgrade head
 python scripts\run_evidence_validation_for_ranked.py ..\data\outputs\agents-outputs\ranking-agent\example.json --output validated_signals.local.json --record-usage
 ```
 
-To inspect the exact Agent 5 LLM input payload without calling OpenAI:
-
-```powershell
-cd D:\development\optimize-financial\backend
-python scripts\run_final_formatting_for_validated.py ..\data\outputs\agents-outputs\critic-agent\example.json --dry-run-input
-```
-
-To test Agent 5 without database usage persistence:
+To test deterministic final formatting:
 
 ```powershell
 cd D:\development\optimize-financial\backend
 python scripts\run_final_formatting_for_validated.py ..\data\outputs\agents-outputs\critic-agent\example.json --output final_signals.local.json
 ```
 
-To test Agent 5 with usage persistence:
-
-```powershell
-cd D:\development\optimize-financial\backend
-python -m alembic upgrade head
-python scripts\run_final_formatting_for_validated.py ..\data\outputs\agents-outputs\critic-agent\example.json --output final_signals.local.json --record-usage
-```
-
-If `--record-usage` reaches OpenAI and fails with `openai.AuthenticationError` / 401, the DB path is working and the configured `OPENAI_API_KEY` is invalid, revoked, or malformed. Keep `OPENAI_API_KEY` on exactly one physical line in `.env`; never paste or print the secret in logs or committed docs.
+If `--record-usage` reaches the provider and fails with an `AuthenticationError` / 401, the DB path is working and the active provider's key is invalid, revoked, or malformed — that is `DEEPSEEK_API_KEY` under the default `LLM_PROVIDER=deepseek`, or `OPENAI_API_KEY` under `LLM_PROVIDER=openai`. Keep each key on exactly one physical line in `.env`; never paste or print the secret in logs or committed docs.
 
 ## Data Safety
 

@@ -27,3 +27,10 @@ data/sample_outputs/*
 # VPS-local TLS/ACME state. Do not commit private keys or challenge files.
 certbot/
 infra/nginx/acme/
+
+# Skills: single source of truth lives in /skills (tracked). The per-tool paths
+# .claude/skills and .codex/skills are local directory junctions to /skills,
+# created with: New-Item -ItemType Junction -Path .claude\skills -Target ..\skills
+# Edit skills in /skills only; both tools read the same files through the junctions.
+/.claude/skills/
+/.codex/skills/

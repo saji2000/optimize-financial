@@ -13,7 +13,7 @@ from app.pipeline.schemas import CandidateSignal, PreparedTranscript, Transcript
 from app.services.llm_usage_service import LLMUsageService
 
 
-SIGNAL_EXTRACTION_MODEL = settings.openai_model_mid
+SIGNAL_EXTRACTION_MODEL = settings.active_model_mid
 SIGNAL_EXTRACTION_PROMPT = "signal_extraction_v1.md"
 SIGNAL_EXTRACTION_PROMPT_VERSION = "signal_extraction_v1"
 SIGNAL_EXTRACTION_AGENT_NAME = "SignalExtractionAgent"

@@ -1,6 +1,6 @@
 ---
 name: backend
-description: "Use as repo knowledge for Optimize Financial backend work: FastAPI routes, PostgreSQL/Alembic persistence, SQLAlchemy models/repositories/services, Celery worker execution, transcript upload/list/detail APIs, final public signal serving, pipeline-run status, artifact import, LLM usage tracking, and backend tests. Use when modifying code under backend/, backend migrations, worker tasks, API schemas, persistence scripts, or backend smoke/test workflows."
+description: "Use as repo knowledge for Optimize Financial backend work: FastAPI routes, PostgreSQL/Alembic persistence, SQLAlchemy models/repositories/services, Celery worker execution, transcript upload/list/detail APIs, final Agent-5 signal serving, pipeline-run status, artifact import, LLM usage tracking, and backend tests. Use when modifying code under backend/, backend migrations, worker tasks, API schemas, persistence scripts, or backend smoke/test workflows."
 ---
 
 # Optimize Backend Knowledge
@@ -9,16 +9,16 @@ description: "Use as repo knowledge for Optimize Financial backend work: FastAPI
 
 Use this skill for backend implementation work in `D:\development\optimize-financial\backend`.
 
-Backend V1 stores and serves only real pipeline data:
+Backend V1 stores and serves real pipeline data plus reviewer feedback:
 
 - Uploaded transcript raw text and processing status.
 - Prepared Agent-1 transcript turns.
-- Final public signals from deterministic final formatting.
+- Final Agent-5 public signals with reviewer feedback (approve/reject/flag).
 - Pipeline run status and sanitized failures.
 - Existing `llm_usage_events` for LLM call usage, cost, latency, retry, and failure metadata.
 - Aggregated LLM usage read models for transcripts and pipeline runs.
 
-Do not add advisor/client metadata, reviewer workflows, approval state, export readiness, dashboard cosmetics, or rich frontend-only fields unless the user explicitly asks for a later product scope.
+Do not add advisor/client metadata, export readiness, dashboard cosmetics, or rich frontend-only fields unless the user explicitly asks for a later product scope.
 
 For detailed Agent 1-5 behavior, use the repo `agents` skill. This backend skill focuses on API, persistence, worker flow, migrations, scripts, and tests.
 
@@ -46,7 +46,7 @@ Main entry points:
 
 Local frontend integration:
 
-- `backend/app/main.py` includes `CORSMiddleware` for Vite dev origins matching `localhost` and `127.0.0.1` on port `2020`.
+- `backend/app/main.py` includes `CORSMiddleware` for Vite dev origins matching `localhost` and `127.0.0.1` on ports `5170-5179`.
 - Keep CORS local and explicit. Do not broaden production origins without an actual deployment target and auth story.
 
 Authentication:
@@ -61,7 +61,7 @@ Authentication:
 
 ## V1 Database
 
-Current V1 tables are introduced by `backend/migrations/versions/20260520_0002_add_v1_pipeline_tables.py`.
+Current V1 tables are introduced by `backend/migrations/versions/20260520_0002_add_v1_pipeline_tables.py`, with signal feedback columns added in `backend/migrations/versions/20260524_0003_add_signal_feedback_columns.py`.
 
 Use these model files:
 
@@ -75,7 +75,7 @@ V1 table shape:
 
 - `transcripts`: `id`, `title`, `raw_text`, `status`, `created_at`, `updated_at`, sanitized `error_type`, sanitized `error_message`.
 - `transcript_turns`: `id`, `transcript_id`, `sequence`, `timestamp`, `end_timestamp`, `speaker`, `speaker_role`, `text`, `source_chunk_id`.
-- `final_signals`: `id`, `transcript_id`, `item_type`, `rank`, `category`, `advisor_quote`, `timestamp`, `evidence_strength`, `rationale`, `created_at`.
+- `final_signals`: `id`, `transcript_id`, `item_type`, `rank`, `category`, `advisor_quote`, `timestamp`, `evidence_strength`, `rationale`, `created_at`, `review_status`, `flag`, `reviewer_notes`, `reviewed_at`, `reviewed_by`.
 - `pipeline_runs`: `id`, `transcript_id`, `status`, `started_at`, `completed_at`, `created_at`, sanitized `error_type`, sanitized `error_message`.
 - `llm_usage_events`: existing table from `20260519_0001_add_llm_usage_events`; reuse it for V1 analytics.
 
@@ -126,7 +126,7 @@ Implemented V1 routes:
 
 - `GET /signals`
   - Requires bearer authentication.
-  - Returns all final public signals.
+  - Returns all final Agent-5 signals.
   - Optional query: `transcript_id`.
   - Response shape is public final schema plus internal generated `id`.
 
@@ -139,7 +139,20 @@ Implemented V1 routes:
   - Requires bearer authentication.
   - Returns one run plus `usage` and `usage_by_step`, or 404.
 
-Review and export routes are still placeholders. Keep review/export/dashboard-specific backend behavior out of V1 unless the user asks for it.
+- `PATCH /review/signals/{signal_id}`
+  - Requires bearer authentication.
+  - Accepts `SignalFeedbackUpdate`: optional `review_status` (pending/approved/rejected), `flag` (bool), `reviewer_notes` (string).
+  - Updates the signal's feedback columns and sets `reviewed_by` from the authenticated user's username and `reviewed_at` to the current time.
+  - Returns `SignalFeedbackResponse` with the updated feedback fields.
+  - Returns 404 if the signal does not exist.
+
+- `PATCH /review/signals`
+  - Requires bearer authentication.
+  - Accepts `BulkFeedbackUpdate`: `signal_ids` list plus optional `review_status`, `flag`, `reviewer_notes`.
+  - Applies the same update to all found signals.
+  - Returns `BulkFeedbackResponse` with `updated` list and `not_found` list.
+
+Export route is still a placeholder. Keep export/dashboard-specific backend behavior out of V1 unless the user asks for it.
 
 ## Public Schemas
 
@@ -150,7 +163,7 @@ LLM usage response schemas live in `backend/app/domain/usage_schema.py`:
 - `LLMUsageSummaryRead`: `calls`, `input_tokens`, `output_tokens`, `total_tokens`, `estimated_total_cost_usd`, `retry_count`, `latest_pricing_version`.
 - `LLMUsageStepRead`: `pipeline_step`, `agent_name`, `calls`, `input_tokens`, `output_tokens`, `total_tokens`, `estimated_total_cost_usd`, `retry_count`, `models`, `prompt_versions`.
 
-Usage totals are estimated API costs calculated from recorded OpenAI token counts and the backend pricing table. They are not invoice or billing reconciliation data. Zero-event summaries should return zero numeric fields and `latest_pricing_version: null`.
+Usage totals are estimated API costs calculated from recorded model token counts (for the active provider) and the backend pricing table, including DeepSeek cache-hit/miss input splitting. They are not invoice or billing reconciliation data. Zero-event summaries should return zero numeric fields and `latest_pricing_version: null`.
 
 Important public signal shape is `SignalRead` in `backend/app/domain/signal_schema.py`:
 
@@ -164,11 +177,26 @@ Important public signal shape is `SignalRead` in `backend/app/domain/signal_sche
   "advisor_quote": "I need stronger support.",
   "timestamp": "00:01:00",
   "evidence_strength": "explicit",
-  "rationale": "The advisor states a support need."
+  "rationale": "The advisor states a support need.",
+  "review_status": "pending",
+  "flag": false,
+  "reviewer_notes": null,
+  "reviewed_at": null,
+  "reviewed_by": null
 }
 ```
 
-Do not use the old `signal_type` / `summary` / `evidence_quote` shape for final public API output.
+Review feedback schemas live in `backend/app/domain/review_schema.py`:
+
+- `SignalFeedbackUpdate`: PATCH body with optional `review_status` (`ReviewStatus` enum), `flag`, `reviewer_notes`.
+- `BulkFeedbackUpdate`: PATCH body with `signal_ids` list plus the same optional fields.
+- `SignalFeedbackResponse`: response with `signal_id`, `review_status`, `flag`, `reviewer_notes`, `reviewed_at`, `reviewed_by`.
+- `BulkFeedbackResponse`: response with `updated` list and `not_found` list.
+
+`ReviewStatus` enum (`backend/app/domain/enums.py`): `pending`, `approved`, `rejected`.
+
+
+Do not use the old `signal_type` / `summary` / `evidence_quote` shape for final Agent-5 API output.
 
 ## Worker Flow
 
@@ -199,11 +227,20 @@ The worker must not log raw transcript text or full exception messages that may 
 
 `run_signals(...)` remains available for compatibility and returns only final signals.
 
+## LLM Provider
+
+The pipeline is provider-configurable through `settings.llm_provider` (`LLM_PROVIDER` in `.env`), which defaults to `"deepseek"` for cost; `"openai"` is fully supported and reversible by flipping the one env var. The active model per tier is resolved by `settings.active_model` / `active_model_mid` / `active_model_low`, which return the DeepSeek or OpenAI model name based on the provider. Keep all OpenAI `.env` values intact; do not delete them.
+
+- `backend/app/llm/openai_client.py` is the single provider boundary. `get_llm_client(provider)` builds the OpenAI SDK with DeepSeek's `base_url` + `DEEPSEEK_API_KEY`, or OpenAI's default. `OpenAIClient(provider=...)` defaults to `settings.llm_provider`.
+- DeepSeek only supports Chat Completions (no Responses API), JSON mode (`response_format={"type":"json_object"}`, schema injected into the system prompt + validated locally), and no `service_tier`. The client transparently routes every call through Chat Completions when the provider is DeepSeek, regardless of an agent's `endpoint`/`service_tier` constants, and reports `endpoint="chat_completions"` in observability.
+- Cost is model-name keyed in `settings.openai_model_pricing_usd_per_1m_tokens` (`backend/app/llm/pricing.py`). DeepSeek V4 entries (`deepseek-v4-flash`, `deepseek-v4-pro`) include a cache-miss `input`, a cheaper `input_cache_hit`, and `output` rate. Cost recording is unchanged in shape — adding model entries is all that's needed.
+- DeepSeek-path behavior is covered by `backend/tests/test_deepseek_provider.py`. `backend/tests/conftest.py` pins the rest of the suite to `LLM_PROVIDER=openai` so existing OpenAI-path assertions stay valid.
+
 ## LLM Usage Reads
 
 Usage write behavior:
 
-- Agents use `OpenAIClient(usage_recorder=LLMUsageService())` by default.
+- Agents use `OpenAIClient(usage_recorder=LLMUsageService())` by default; the client resolves the active provider (DeepSeek/OpenAI) from `settings.llm_provider`. See "LLM Provider" above.
 - `PipelineOrchestrator(record_usage=True)` is the default and records usage.
 - The worker path calls `PipelineOrchestrator(pipeline_run_id=run_id)`, so worker-generated events should include both `transcript_id` and `pipeline_run_id`.
 - Local smoke scripts disable usage by default; pass `--record-usage` only when Postgres is available and migrations have run.
@@ -270,7 +307,7 @@ cd D:\development\optimize-financial\backend
 python -m alembic upgrade head
 ```
 
-If `python -m alembic upgrade head` times out on `localhost:2040`, local Postgres is not reachable. The migration chain can be smoke-tested without Postgres with:
+If `python -m alembic upgrade head` times out on `localhost:5432`, local Postgres is not reachable. The migration chain can be smoke-tested without Postgres with:
 
 ```powershell
 cd D:\development\optimize-financial\backend
@@ -290,7 +327,7 @@ Run the API locally:
 
 ```powershell
 cd D:\development\optimize-financial\backend
-python -m uvicorn app.main:app --reload --port 2030
+python -m uvicorn app.main:app --reload
 ```
 
 Run a worker when Redis/Postgres are available:
@@ -323,6 +360,7 @@ Key V1 tests:
 - `backend/tests/test_artifact_import.py`: sanitized artifact import.
 - `backend/tests/test_alembic_migrations.py`: migration chain smoke.
 - `backend/tests/test_api_signals.py`: route-level empty signal listing.
+- `backend/tests/test_signal_feedback.py`: signal feedback PATCH endpoints — approve, reject, flag, 404, bulk update, review fields in GET /signals, persistence across requests.
 
 Existing agent and usage tests remain important:
 

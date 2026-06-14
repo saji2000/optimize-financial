@@ -17,6 +17,7 @@ from app.services.llm_usage_service import LLMUsageEventCreate
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel)
 ServiceTier = Literal["flex", "standard"]
 OpenAIEndpoint = Literal["chat_completions", "responses"]
+LLMProvider = Literal["deepseek", "openai"]
 DEFAULT_SERVICE_TIER: ServiceTier = "flex"
 DEFAULT_OPENAI_ENDPOINT: OpenAIEndpoint = "chat_completions"
 DEFAULT_RETRY_DELAY_SECONDS = 60.0
@@ -29,8 +30,23 @@ TRANSIENT_OPENAI_ERROR_NAMES = {
 LOGGER = logging.getLogger(__name__)
 
 
-def get_openai_client() -> OpenAI:
+def get_llm_client(provider: LLMProvider | None = None) -> OpenAI:
+    """Return an OpenAI-compatible SDK client configured for the active provider.
+
+    DeepSeek exposes an OpenAI-compatible Chat Completions API at its own
+    base_url; OpenAI uses its default base_url. Both use the OpenAI SDK.
+    """
+    provider = provider or settings.llm_provider
+    if provider == "deepseek":
+        return OpenAI(
+            api_key=settings.deepseek_api_key,
+            base_url=settings.deepseek_base_url,
+        )
     return OpenAI(api_key=settings.openai_api_key)
+
+
+def get_openai_client() -> OpenAI:
+    return get_llm_client("openai")
 
 
 def is_retryable_llm_error(error: Exception) -> bool:
@@ -62,6 +78,7 @@ class OpenAIClient:
         attempts: int = 3,
         initial_retry_delay_seconds: float = DEFAULT_RETRY_DELAY_SECONDS,
         sleep_func: Callable[[float], None] = time.sleep,
+        provider: LLMProvider | None = None,
     ) -> None:
         if attempts <= 0:
             raise ValueError("attempts must be greater than zero")
@@ -73,6 +90,7 @@ class OpenAIClient:
         self.attempts = attempts
         self.initial_retry_delay_seconds = initial_retry_delay_seconds
         self.sleep_func = sleep_func
+        self.provider: LLMProvider = provider or settings.llm_provider
 
     def parse_structured_output(
         self,
@@ -88,10 +106,12 @@ class OpenAIClient:
     ) -> ResponseModelT:
         self._validate_service_tier(service_tier)
         self._validate_endpoint(endpoint)
+        observability_endpoint = self._observability_endpoint(endpoint)
         started_at = time.perf_counter()
         last_error: Exception | None = None
         last_input_tokens = 0
         last_output_tokens = 0
+        last_cache_hit_tokens = 0
         final_attempt_index = 0
 
         for attempt_index in range(self.attempts):
@@ -107,16 +127,19 @@ class OpenAIClient:
                     endpoint=endpoint,
                 )
                 latency_ms = self._elapsed_ms(started_at)
-                input_tokens, output_tokens = self._extract_token_usage(response)
+                input_tokens, output_tokens, cache_hit_tokens = self._extract_token_usage(
+                    response
+                )
                 last_input_tokens = input_tokens
                 last_output_tokens = output_tokens
+                last_cache_hit_tokens = cache_hit_tokens
                 parsed = self._parse_response(response, response_model)
             except Exception as exc:
                 last_error = exc
                 self._log_openai_failure(
                     error=exc,
                     model=model,
-                    endpoint=endpoint,
+                    endpoint=observability_endpoint,
                     service_tier=service_tier,
                     context=context,
                     attempt_index=attempt_index,
@@ -132,10 +155,11 @@ class OpenAIClient:
                 self._record_usage(
                     context=context,
                     model=model,
-                    endpoint=endpoint,
+                    endpoint=observability_endpoint,
                     service_tier=service_tier,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
+                    cache_hit_tokens=cache_hit_tokens,
                     latency_ms=latency_ms,
                     retry_count=attempt_index,
                     status="success",
@@ -149,10 +173,11 @@ class OpenAIClient:
             self._record_usage(
                 context=context,
                 model=model,
-                endpoint=endpoint,
+                endpoint=observability_endpoint,
                 service_tier=service_tier,
                 input_tokens=last_input_tokens,
                 output_tokens=last_output_tokens,
+                cache_hit_tokens=last_cache_hit_tokens,
                 latency_ms=latency_ms,
                 retry_count=final_attempt_index,
                 status="failed",
@@ -177,6 +202,14 @@ class OpenAIClient:
         service_tier: ServiceTier,
         endpoint: OpenAIEndpoint,
     ) -> Any:
+        if self.provider == "deepseek":
+            return self._create_deepseek_structured_response(
+                model=model,
+                system_prompt=system_prompt,
+                input_payload=input_payload,
+                response_model=response_model,
+                max_output_tokens=max_output_tokens,
+            )
         if endpoint == "responses":
             return self._create_responses_structured_response(
                 model=model,
@@ -221,8 +254,50 @@ class OpenAIClient:
         if settings.openai_temperature is not None:
             request["temperature"] = settings.openai_temperature
 
-        sdk_client = self.sdk_client or get_openai_client()
+        sdk_client = self.sdk_client or get_llm_client(self.provider)
         return sdk_client.beta.chat.completions.parse(**request)
+
+    def _create_deepseek_structured_response(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        input_payload: dict[str, Any],
+        response_model: type[ResponseModelT],
+        max_output_tokens: int,
+    ) -> Any:
+        # DeepSeek's OpenAI-compatible API supports JSON mode but not OpenAI's
+        # strict json_schema parse helper or service_tier. Convey the schema in
+        # the prompt and validate the returned content locally (see _parse_response).
+        schema = json.dumps(
+            response_model.model_json_schema(),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        augmented_system_prompt = (
+            f"{system_prompt}\n\n"
+            "Respond with a single valid JSON object that conforms exactly to "
+            "the following JSON schema. Do not include any text, markdown, or "
+            "code fences outside the JSON object.\n"
+            f"JSON schema:\n{schema}"
+        )
+        request: dict[str, Any] = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": augmented_system_prompt},
+                {
+                    "role": "user",
+                    "content": json.dumps(input_payload, ensure_ascii=False, separators=(",", ":")),
+                },
+            ],
+            "response_format": {"type": "json_object"},
+            "max_tokens": max_output_tokens,
+        }
+        if settings.openai_temperature is not None:
+            request["temperature"] = settings.openai_temperature
+
+        sdk_client = self.sdk_client or get_llm_client(self.provider)
+        return sdk_client.chat.completions.create(**request)
 
     def _create_responses_structured_response(
         self,
@@ -245,7 +320,7 @@ class OpenAIClient:
         if settings.openai_temperature is not None:
             request["temperature"] = settings.openai_temperature
 
-        sdk_client = self.sdk_client or get_openai_client()
+        sdk_client = self.sdk_client or get_llm_client(self.provider)
         return sdk_client.responses.parse(**request)
 
     def _parse_response(
@@ -262,14 +337,32 @@ class OpenAIClient:
             return response_model.model_validate_json(content)
         return response_model.model_validate(parsed)
 
-    def _extract_token_usage(self, response: Any) -> tuple[int, int]:
+    def _extract_token_usage(self, response: Any) -> tuple[int, int, int]:
         usage = getattr(response, "usage", None)
         if usage is None:
-            return 0, 0
+            return 0, 0, 0
 
         input_tokens = self._read_int_attr(usage, "prompt_tokens", "input_tokens")
         output_tokens = self._read_int_attr(usage, "completion_tokens", "output_tokens")
-        return input_tokens, output_tokens
+        cache_hit_tokens = self._extract_cache_hit_tokens(usage)
+        return input_tokens, output_tokens, cache_hit_tokens
+
+    def _extract_cache_hit_tokens(self, usage: Any) -> int:
+        # DeepSeek reports cached prompt tokens directly; OpenAI nests them
+        # under prompt_tokens_details / input_tokens_details as cached_tokens.
+        direct = self._read_int_attr(usage, "prompt_cache_hit_tokens")
+        if direct:
+            return direct
+        for details_name in ("prompt_tokens_details", "input_tokens_details"):
+            if isinstance(usage, dict):
+                details = usage.get(details_name)
+            else:
+                details = getattr(usage, details_name, None)
+            if details is not None:
+                cached = self._read_int_attr(details, "cached_tokens")
+                if cached:
+                    return cached
+        return 0
 
     def _read_int_attr(self, item: Any, *names: str) -> int:
         for name in names:
@@ -293,11 +386,13 @@ class OpenAIClient:
         retry_count: int,
         status: str,
         error_type: str | None,
+        cache_hit_tokens: int = 0,
     ) -> None:
         input_cost, output_cost, total_cost = estimate_openai_cost_usd(
             model=model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cache_hit_tokens=cache_hit_tokens,
         )
         record_llm_observability(
             attributes=llm_observability_attributes(
@@ -383,6 +478,13 @@ class OpenAIClient:
     def _validate_endpoint(self, endpoint: str) -> None:
         if endpoint not in ("chat_completions", "responses"):
             raise ValueError("endpoint must be 'chat_completions' or 'responses'")
+
+    def _observability_endpoint(self, endpoint: OpenAIEndpoint) -> OpenAIEndpoint:
+        # DeepSeek always routes through Chat Completions regardless of the
+        # agent's requested endpoint; report that for accurate observability.
+        if self.provider == "deepseek":
+            return "chat_completions"
+        return endpoint
 
     def _elapsed_ms(self, started_at: float) -> int:
         return max(0, int((time.perf_counter() - started_at) * 1000))

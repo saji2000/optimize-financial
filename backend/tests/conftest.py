@@ -1,3 +1,12 @@
+import os
+
+# Pin the test suite to the OpenAI provider so the existing OpenAI-path
+# assertions (Responses API, service_tier, gpt-5.x model defaults) stay valid
+# regardless of the runtime default in .env. Must run before app.core.config is
+# imported below so the settings singleton picks it up. DeepSeek-path behavior
+# is covered explicitly in test_deepseek_provider.py.
+os.environ["LLM_PROVIDER"] = "openai"
+
 from collections.abc import Iterator
 
 import pytest

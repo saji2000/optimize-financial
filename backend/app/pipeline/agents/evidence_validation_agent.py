@@ -18,8 +18,8 @@ from app.pipeline.schemas import PreparedTranscript, RankedSignal, TranscriptChu
 from app.services.llm_usage_service import LLMUsageService
 
 
-EVIDENCE_VALIDATION_MODEL = settings.openai_model
-EVIDENCE_VALIDATION_FALLBACK_MODEL = settings.openai_model_mid
+EVIDENCE_VALIDATION_MODEL = settings.active_model
+EVIDENCE_VALIDATION_FALLBACK_MODEL = settings.active_model_mid
 EVIDENCE_VALIDATION_ENDPOINT: OpenAIEndpoint = "responses"
 EVIDENCE_VALIDATION_SERVICE_TIER: ServiceTier = DEFAULT_SERVICE_TIER
 EVIDENCE_VALIDATION_MAX_OUTPUT_TOKENS = 6000

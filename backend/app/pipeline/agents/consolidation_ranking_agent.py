@@ -17,8 +17,8 @@ from app.pipeline.schemas import CandidateSignal, RankedSignal
 from app.services.llm_usage_service import LLMUsageService
 
 
-CONSOLIDATION_RANKING_MODEL = settings.openai_model
-CONSOLIDATION_RANKING_FALLBACK_MODEL = settings.openai_model_mid
+CONSOLIDATION_RANKING_MODEL = settings.active_model
+CONSOLIDATION_RANKING_FALLBACK_MODEL = settings.active_model_mid
 CONSOLIDATION_RANKING_SERVICE_TIER: ServiceTier = DEFAULT_SERVICE_TIER
 CONSOLIDATION_RANKING_ENDPOINT: OpenAIEndpoint = "responses"
 CONSOLIDATION_RANKING_MAX_OUTPUT_TOKENS = 6000

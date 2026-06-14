@@ -22,7 +22,16 @@
       "Bash(Sort-Object)",
       "Bash(cd /d \"D:\\\\development\\\\optimize-financial\")",
       "Bash(python -c \"import dis, importlib.util; spec = importlib.util.spec_from_file_location\\('auth', 'backend/app/security/__pycache__/auth.cpython-311.pyc'\\); mod = importlib.util.module_from_spec\\(spec\\); print\\('Module loaded'\\)\")",
-      "PowerShell(python -c \"import marshal, dis, types; f=open\\('D:/development/optimize-financial/backend/app/security/__pycache__/auth.cpython-311.pyc','rb'\\); f.read\\(16\\); code=marshal.load\\(f\\); [print\\(c.co_name, '->', c.co_varnames[:c.co_argcount]\\) for c in code.co_consts if isinstance\\(c, types.CodeType\\)]\")"
+      "PowerShell(python -c \"import marshal, dis, types; f=open\\('D:/development/optimize-financial/backend/app/security/__pycache__/auth.cpython-311.pyc','rb'\\); f.read\\(16\\); code=marshal.load\\(f\\); [print\\(c.co_name, '->', c.co_varnames[:c.co_argcount]\\) for c in code.co_consts if isinstance\\(c, types.CodeType\\)]\")",
+      "Read(//c/Users/admin/.claude/**)",
+      "Read(//c/Users/admin/.codex/**)",
+      "Bash(set -e)",
+      "Bash(cp -r .claude/skills skills)",
+      "Bash(cp -r .codex/skills/agents skills/agents)",
+      "Bash(git rm *)",
+      "Bash(rm -rf .claude/skills .codex/skills)",
+      "Bash(sed -i '$ d' skills/prompts/SKILL.md)",
+      "Bash(sed -i '${/^$/d}' skills/prompts/SKILL.md)"
     ]
   }
 }

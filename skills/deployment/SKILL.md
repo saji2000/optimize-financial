@@ -122,9 +122,24 @@ Uploads require all of these to be healthy:
 - Postgres reachable by backend and worker.
 - Redis reachable by backend and worker.
 - Worker task registered.
-- Valid one-line `OPENAI_API_KEY` in `.env` for OpenAI-backed Agent 2-5 processing.
+- A valid one-line API key for the active provider in `.env`. With the default `LLM_PROVIDER=deepseek`, that is `DEEPSEEK_API_KEY` (used by Agents 2-4); with `LLM_PROVIDER=openai`, it is `OPENAI_API_KEY`.
 
-Without a valid OpenAI key, upload ingestion can create queued/running rows, but pipeline execution will fail at the model-backed stages.
+Without a valid key for the active provider, upload ingestion can create queued/running rows, but pipeline execution will fail at the model-backed stages.
+
+## LLM Provider Configuration
+
+The pipeline selects its LLM provider from `.env` via `LLM_PROVIDER` (default `deepseek`). Both `backend` and `worker` use `env_file: - .env` in `docker-compose.yml` and only override `DATABASE_URL`/`REDIS_URL`, so these variables reach the containers automatically — no Compose change is needed. Restart (not rebuild) backend/worker after changing them, since source is bind-mounted but env is read at process start.
+
+```env
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=<key>
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-pro
+DEEPSEEK_MODEL_MID=deepseek-v4-flash
+DEEPSEEK_MODEL_LOW=deepseek-v4-flash
+```
+
+Keep all `OPENAI_*` lines in `.env` so the provider can be flipped back without code changes. The VPS `.env` is a separate file from the repo `.env`; add the block above there before redeploying. DeepSeek uses the OpenAI-compatible Chat Completions API at its own `base_url`; no Anthropic/Responses endpoints are involved.
 
 ## Troubleshooting
 

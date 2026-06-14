@@ -23,10 +23,12 @@ If the user later wants to revisit a parked version, the mechanism is in `backen
 
 ## Prompt files and their roles
 
-- `signal_extraction_v1.md` — segment-level extraction over one chunk (Chat Completions, `gpt-5.4`). Emits candidate drivers/blockers.
-- `consolidation_ranking_v1.md` — transcript-level merge + ranking (Responses API, `gpt-5.5` with mid-tier fallback). Picks ≤3 of each item type.
-- `evidence_validation_v1.md` — critic gate; keeps/rewrites/rejects ranked signals against transcript evidence (Responses API, `gpt-5.5` with mid-tier fallback). Every ranked input must end up in either `validated_signals` or `rejected_signals`.
-- `final_formatting_v1.md` — strips internal audit fields and produces the public deliverable (Responses API, `gpt-5.4`, no fallback).
+- `signal_extraction_v1.md` — segment-level extraction over one chunk (mid-tier model). Emits candidate drivers/blockers.
+- `consolidation_ranking_v1.md` — transcript-level merge + ranking (high-tier model with mid-tier fallback). Picks ≤3 of each item type.
+- `evidence_validation_v1.md` — critic gate; keeps/rewrites/rejects ranked signals against transcript evidence (high-tier model with mid-tier fallback). Every ranked input must end up in either `validated_signals` or `rejected_signals`.
+- `final_formatting_v1.md` — historical only; final formatting is now deterministic in code and makes no LLM call.
+
+The endpoint and model behind each prompt depend on `LLM_PROVIDER` (see the `agents` skill). Under OpenAI, extraction uses Chat Completions and consolidation/validation use the Responses API, with `gpt-5.x` models. Under the default DeepSeek provider, all three run through DeepSeek's Chat Completions **JSON mode** on `deepseek-v4-pro`/`deepseek-v4-flash`. Crucially, the response model's JSON schema is injected into the system prompt **generically by the client**, so prompt files do not need per-provider edits. DeepSeek JSON mode is not strictly schema-enforced, so a malformed structure surfaces as a Pydantic `ValidationError` that fails fast (no retry, no model fallback); if adherence is weak, the fix is a new `_v2.md` with explicit JSON guidance, never an in-place `_v1.md` edit.
 
 The contracts between agents (IDs, `item_type`, `evidence_strength`, rank renumbering, max-3) are enforced in code after the LLM call — agents 3 and 4 cap at 3 per `item_type`, agent 4 requires every ranked input to appear in exactly one of validated/rejected. Prompts should reinforce these contracts but must not contradict them.
 
